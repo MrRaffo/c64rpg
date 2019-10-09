@@ -7,9 +7,11 @@
 ;ver 4: added animations and basic keyboard reading - pressing 1 to 4 will choose a different animation for player sprite
 ;ver 5: (b) added better animations and changed movement to 1 pixel per frame and one of four directions at a time
 
-;=============================================================
+;ver 6: complete rewrite
+
+;================================================
 ;CONSTANTS
-;=============================================================
+;================================================
 
 ;COLOURS
 BLACK                           = $00
@@ -28,7 +30,6 @@ MIDDLE_GREY                     = $0c
 LIGHT_GREEN                     = $0d
 LIGHT_BLUE                      = $0e
 LIGHT_GREY                      = $0f
-
 
 ;CPU
 CIA_PROCESSOR_PORT              = $01       ;set ram/rom visibility
@@ -74,15 +75,18 @@ VARIABLE3                       = $05
 VARIABLE4                       = $06
 VARIABLE5                       = $07
 
-MULTI1                          = $26           ;operand 1
-MULTI2                          = $27           ;operand 2
-MULTIL                          = $28           ;result low-byte
-MULTIH                          = $29           ;result high-byte
-
 ZEROPAGE_POINTER_1              = $17
 ZEROPAGE_POINTER_2              = $19
 ZEROPAGE_POINTER_3              = $1b
 ZEROPAGE_POINTER_4              = $1d
+ZEROPAGE_POINTER_5				= $1f
+ZEROPAGE_POINTER_6				= $21
+ZEROPAGE_POINTER_7				= $23
+
+MULTI1                          = $26           ;operand 1
+MULTI2                          = $27           ;operand 2
+MULTIL                          = $28           ;result low-byte
+MULTIH                          = $29           ;result high-byte
 
 NUMBER_OF_SPRITES               = $20
 SPRITE_BASE                     = $40               ;64 in decimal
@@ -131,938 +135,589 @@ ANIMATION_PLAYER_WALK_RIGHT		= 8
 ANIMATION_PLAYER_TALK			= 9
 ANIMATION_PLAYER_DANCE			= 10
 
-;=============================================================
-;   INITIALIZATION
-;=============================================================
 
-        * = $0801
+;=========================================================
+;	INITIALIZATION
+;=========================================================
 
-        ;Autostart - SYS2064
-        !byte $0c, $08, $0a, $00, $9e, $20, $32, $30, $36, $34, $00, $00, $00, $00, $00
-
-        ;initialize registers
-        lda #$00
-        sta VIC_SPRITE_ENABLE_REGISTER      ;disable sprites
-
-
-        sta VIC_BACKGROUND_COLOR			;black
-        lda #GREEN
-		sta VIC_BORDER_COLOR                
+		* = $0801
+		
+		;Autostart - SYS2064 in BASIC
+		!byte $0c, $08, $0a, $00, $9e, $20, $32, $30, $36, $34, $00, $00, $00, $00, $00
 		
 		
-        ;set VIC bank
-        lda CIA_PRA
-        and #%11111100                      ;select VIC bank #3 - $c000 - $ffff
-        sta CIA_PRA
-
-        ;set charset and screen buffer locations
-        lda #%00111100
-        sta VIC_MEMORY_CONTROL              ;char data at $f000, screen buffer at $cc00
-
-
-        ;===============================
-        ;copy charset data to target
-        ;===============================
-
-        sei             ;turn off registers, we'll be writing under ROMs
-
-        lda CIA_PROCESSOR_PORT      ;$01
-        sta VARIABLE1               ;store default config for later
-
-        lda #%00110000              ;turn off ROMs
-        sta CIA_PROCESSOR_PORT
-
-        lda #<CHARSET_DATA
-        sta ZEROPAGE_POINTER_1
-        lda #>CHARSET_DATA
-        sta ZEROPAGE_POINTER_1 + 1  ;set source pointer
-
-        jsr CopyCharsetData         ;copy the raw data to it's destination in RAM
-
-
-        ;==============================
-        ;set palette data for charset
-        ;==============================
-
-        ;TODO this will set up the relevent colours of each char
-        ;a map for the charset will be made for colours instead of char defs
-        ;these can then be read and copied to $d800 at the same time as the screen buffer is set up
-
-
-        ;==============================
-        ;copy sprite data to target
-        ;==============================
-
-        lda #<SPRITE_DATA
-        sta ZEROPAGE_POINTER_1
-        lda #>SPRITE_DATA
-        sta ZEROPAGE_POINTER_1 + 1  ;set source pointer
-
-        jsr CopySpriteData
-
-        lda VARIABLE1
-        sta CIA_PROCESSOR_PORT      ;restore default ROM visibility
-
-        cli                         ;turn IRQs back on
-
-        jsr ClearScreen             ;clear the screen
-
-;=================================
-;INITIALIZE SPRITE FOR TESTING
-;=================================
-
-
-        lda #$78                    
-        sta SPRITE_X_POS
-        sta SPRITE_Y_POS            
-
-        sta SPRITE_POINTER_BASE
-
-        lda #$01
-        sta VIC_SPRITE_ENABLE_REGISTER
-        sta VIC_SPRITE_MULTICOLOR_REGISTER
-
-        lda #ORANGE
-        sta VIC_SPRITE_COLOR_1
-
-        lda #YELLOW
-        sta VIC_SPRITE_COLOR_2
-
-        lda #LIGHT_GREY
-        sta VIC_SPRITE_COLOR_BASE
-
-;==================================
-;INITIALIZE TILE DATA FOR TESTING
-;==================================
-
-        lda VIC_CONTROL_REGISTER_2
-        ora #%00010000                  ;text multicolor mode
-        sta VIC_CONTROL_REGISTER_2
-
-        lda #BROWN
-        sta VIC_BGCOLOR_1
-
-        lda #MIDDLE_GREY
-        sta VIC_BGCOLOR_2
-
-		ldx #<SCREEN_1_DATA
-		stx ZEROPAGE_POINTER_1
-		ldx #>SCREEN_1_DATA
-		stx ZEROPAGE_POINTER_1 + 1
+		;initialize registers
+		lda #$00
+		sta VIC_SPRITE_ENABLE_REGISTER		;disable sprites
 		
-		jsr CopyScreenData
-        jsr DrawScreen
+		sta VIC_BACKGROUND_COLOR			;black
+		lda #GREEN
+		sta VIC_BORDER_COLOR
 		
-TEST_Charset							;print alphabet under play area
-		ldx #$00
-		ldy #$e0
+		;set VIC bank
+		lda CIA_PRA							;($dd00)
+		and #%11111100						;set VIC bank #3 ($c000 - $ffff)
+		sta CIA_PRA
 		
-TestLoop
-		tya
-		sta SCREEN_CHAR_BUFFER + 880,x
-		iny
-		inx
-		cpx #$20
-		bne TestLoop
+		;set charset and screen buffer locations
+		lda #%00111100
+		sta VIC_MEMORY_CONTROL				;screen buffer at $cc00, char data at $f000
 		
-TestColor
-		ldx #$00
-		lda #WHITE
-TestColorLoop
-		sta $d800 + 880,x
-		inx
-		cpx #$20
-		bne TestColorLoop
-        
-
-;==================================================================
-;       MAIN LOOP
-;==================================================================
+		
+		;============================
+		;copy charset data to target
+		;============================
+		
+		sei									;set interrupts off - writing under ROMs
+		
+		lda CIA_PROCESSOR_PORT 				;($01) Controls ROM visibility
+		sta VARIABLE1
+		
+		lda #%00110000						;disable ROMs (bottom 3 bits)
+		sta CIA_PROCESSOR_PORT
+		
+		lda #<CHARSET_DATA
+		sta ZEROPAGE_POINTER_1
+		lda #>CHARSET_DATA
+		sta ZEROPAGE_POINTER_1 + 1			;set source of data
+		
+		jsr CopyCharsetData					;copy data to RAM ($f000)
+		
+		;============================
+		;copy sprite data to target
+		;============================
+		
+		lda #<SPRITE_DATA
+		sta ZEROPAGE_POINTER_1
+		lda #>SPRITE_DATA
+		sta ZEROPAGE_POINTER_1 + 1
+		
+		jsr CopySpriteData
+		
+		;=============================
+		;restore ROMs
+		;=============================
+		
+		lda VARIABLE1
+		sta CIA_PROCESSOR_PORT
+		
+		cli									;turn IRQs back on
+		
+		;=============================
+		;prepare screen
+		;=============================
+		
+		jsr ClearScreen						;clear the screen
+		lda VIC_CONTROL_REGISTER_2
+		ora #%00010000						;enable multicolor mode
+		sta VIC_CONTROL_REGISTER_2
+		
+		;============================
+		;testing
+		;============================
+		
+		;jsr TEST_Sprites
+		;jsr TEST_Chars
+		;jsr TEST_DrawTile
+		
+		;setup for testing purposes - should be screen specific later
+		lda #BROWN
+		sta VIC_BGCOLOR_1
+		lda #MIDDLE_GREY
+		sta VIC_BGCOLOR_2
+		
+		
+		ldx #$00							;LEVEL index
+		jsr LEVEL_LoadData
+		jsr LEVEL_DrawScreen
+		
+;====================================================================
+;	MAIN GAME LOOP
+;====================================================================
+		
 !zone GameLoop
 GameLoop
-        ;inc VIC_BORDER_COLOR           ;flash the border
+		jsr TEST_FrameTimer					;flash border
 
-        jsr ReadJoystick
+        jsr TEST_LevelSwitch                ;checks button, changes screen data on press
 		
-		jsr ReadKeyboard
+		jsr WaitFrame						;wait until frame is finished
 		
-		lda #$7f
-		sta $dc00						;finish reading the keyboard
-										;this is why holding the button moves the character in versions 4 and 5
-	
-        jsr UpdateSpritePositions      	;moves sprite software stored positions to hardware position registers, deals with extended X bit
-
-		jsr UpdateAnimations
+		jmp GameLoop
 		
-		jsr CopySpriteFrameData
-		
-		jsr UpdateActions
-		
-        jsr WaitFrame
+;====================================================================
+;	SYSTEM FUNCTIONS
+;====================================================================
 
-        jmp GameLoop
-
-;==================================================================
-;       INITIALISATION FUNCTIONS
-;==================================================================
-
-;====================================
-;Copy the Charset
-;expects source at ZEROPAGE_POINTER_1
-;====================================     
-
-!zone CopyCharsetData
-CopyCharsetData
-        
-        lda #<CHAR_DATA
-        sta ZEROPAGE_POINTER_2
-        lda #>CHAR_DATA
-        sta ZEROPAGE_POINTER_2 + 1  ;set destination pointer
-
-        ldx #$00                    ;counts number of bytes per char written
-        ldy #$00                    ;counts number of bytes total written
-        sty VARIABLE2               ;counts how many characters have been copied (VARIBLE1 is in use at this point)
-
-.CopyChar
-        lda (ZEROPAGE_POINTER_1),y
-        sta (ZEROPAGE_POINTER_2),y
-        inx
-        iny
-        cpx #$08
-        bne .CopyChar
-
-        cpy #$00                    ;if y is 0, 256 bytes have been copied and we need to adjust the pointers
-        bne .PageBoundaryNotReached
-
-        inc ZEROPAGE_POINTER_1 + 1
-        inc ZEROPAGE_POINTER_2 + 1
-
-.PageBoundaryNotReached
-        inc VARIABLE2               ;another character has been copied
-        beq .CopyFinished           ;if VARIABLE2 is 0, then 256 characters have been copied and we're done
-
-        ldx #$00
-        jmp .CopyChar               ;reset x for the next char
-
-.CopyFinished
-        rts
-
-;==========================================
-;CopySpriteData
-;expects source data at ZEROPAGE_POINTER_1
-;==========================================
-
-!zone CopySpriteData
-CopySpriteData
-        ldx #$00        ;counts to 64 to check if a sprite has copied
-        ldy #$00        ;counts all bytes written to check page boundary
-        lda #NUMBER_OF_SPRITES
-        sta VARIABLE2   ;counts number of sprites written (VARIABLE1 is in use)
-
-        lda #<SPRITE_DATA_BUFFER
-        sta ZEROPAGE_POINTER_2
-        lda #>SPRITE_DATA_BUFFER
-        sta ZEROPAGE_POINTER_2 + 1
-
-.CopyLoop
-        lda (ZEROPAGE_POINTER_1),y
-        sta (ZEROPAGE_POINTER_2),y
-        iny
-        inx
-        cpx #$40
-        bne .CopyLoop
-
-        dec VARIABLE2
-        beq .CopyDone
-
-        cpy #$00
-        bne .PageBoundaryNotReached
-
-        inc ZEROPAGE_POINTER_1 + 1
-        inc ZEROPAGE_POINTER_2 + 1
-
-.PageBoundaryNotReached
-        ldx #$00
-        jmp .CopyLoop
-
-.CopyDone
-        rts
-
-
-;==========================================
-;ClearScreen
-;sets all chars in the screen buffer to '0'
-;==========================================
-
-!zone ClearScreen
-ClearScreen
-        ldx #$00
-        lda #$00            ;a blank space
-.CopyLoop
-        sta SCREEN_CHAR_BUFFER,x
-        sta SCREEN_CHAR_BUFFER + $100,x
-        sta SCREEN_CHAR_BUFFER + $200,x
-        sta SCREEN_CHAR_BUFFER + $2e8,x
-        inx 
-        bne .CopyLoop
-
-        rts
-
-
-
-;==================================================================
-;       SYSTEM FUNCTIONS
-;==================================================================
-
-;===========================
+;==========================
 ;WaitFrame
-;ensures stable timing
-;===========================
+;locks code to the VIC chip refresh
+;waits until a frame has been drawn before moving on
+;==========================
 
 !zone WaitFrame
 WaitFrame
-        lda $d012      ;check current raster line
-        cmp #$ff        ;check for desired raster break
-        beq .WaitStep2  ;don't return too soon if raster happens to be on desired line
-
+		lda VIC_RASTER_REGISTER				;($d012)
+		cmp #$ff
+		beq .WaitStep2
+		
 .WaitStep2
-        lda $d012
-        cmp #$ff
-        bne .WaitStep2
-
-        rts
-
-;==========================
-;ReadKeyboard
-;==========================
-
-!zone ReadKeyboard
-ReadKeyboard
-		lda #%01111111
-		sta $dc00			;select row of keyboard matrix
-		lda $dc01
-		cmp #%11111110		;check for '1' key pressed
-		bne .OneKeyNotPressed
+		lda VIC_RASTER_REGISTER
+		cmp #$ff
+		bne .WaitStep2
 		
-		jmp OneKeyPressed
-
-.OneKeyNotPressed		
-		cmp #%11110111		;check for '2' key pressed
-		bne .TwoKeyNotPressed
-		
-		jmp TwoKeyPressed
-
-.TwoKeyNotPressed
-		lda #%11111101
-		sta $dc00
-		lda $dc01
-		
-		cmp #%11111110
-		bne .ThreeKeyNotPressed
-		
-		jmp ThreeKeyPressed
-		
-.ThreeKeyNotPressed
-		cmp #%11110111
-		bne .FourKeyNotPressed
-		
-		jmp FourKeyPressed
-		
-.FourKeyNotPressed
-		
-.NoKeyPressed
 		rts
-
-;==================================================================
-;       CONTROL AND MOVEMENT FUNCTIONS
-;==================================================================
-
+		
 ;=========================
-;ReadJoystick
-;get js status and branch
+;CopyCharsetData
+;copies charset to RAM from source in ZP_1
 ;=========================
 
-!zone ReadJoystick
-ReadJoystick
-
-		lda JOYSTICK_2
-		eor #$0f
-		and #$0f				;check that a direction is being pressed
-		bne .CheckDirections
-								
-								;if no direction, set player standing action							
-		lda CHARACTER_CURRENT_DIRECTION
-		cmp #DIRECTION_UP
-		bne .NotUp
+!zone CopyCharsetData
+CopyCharsetData
 		
-		lda #ACTION_PLAYER_STAND_UP
-		sta CHARACTER_NEXT_ACTION
-		jmp .RightNotPressed
+		lda #<CHAR_DATA
+		sta ZEROPAGE_POINTER_2
+		lda #>CHAR_DATA
+		sta ZEROPAGE_POINTER_2 + 1			;set destination pointer
 		
-.NotUp
-		cmp #DIRECTION_DOWN
-		bne .NotDown
+		ldx #$00							;counts bytes per char written
+		ldy #$00							;counts total bytes written
+		sty VARIABLE2						;counts completed chars written (VARIABLE1 is in use)
 		
-		lda #ACTION_PLAYER_STAND_DOWN
-		sta CHARACTER_NEXT_ACTION
-		jmp .RightNotPressed
-
-.NotDown
-		cmp #DIRECTION_LEFT
-		bne .NotLeft
+.CopyChar
+		lda (ZEROPAGE_POINTER_1),y
+		sta (ZEROPAGE_POINTER_2),y
+		inx
+		iny
+		cpx #$08							;check if char is finished
+		bne .CopyChar
 		
-		lda #ACTION_PLAYER_STAND_LEFT
-		sta CHARACTER_NEXT_ACTION
-		jmp .RightNotPressed
+		cpy #$00							;check if 256 bytes have been copied
+		bne .PageBoundaryNotReached
 		
-.NotLeft
-		cmp #DIRECTION_RIGHT
-		bne .NotUp
 		
-		lda #ACTION_PLAYER_STAND_RIGHT
-		sta CHARACTER_NEXT_ACTION
-		jmp .RightNotPressed
+		inc ZEROPAGE_POINTER_1 + 1			;update high bytes of pointers if need be
+		inc ZEROPAGE_POINTER_2 + 1
 		
-.CheckDirections
-        lda #$01
-        bit JOYSTICK_2
-        bne .UpNotPressed
-        jsr PlayerMoveUp
-		rts
-
-.UpNotPressed
-        lda #$02
-        bit JOYSTICK_2
-        bne .DownNotPressed
-        jsr PlayerMoveDown
-		rts
-
-.DownNotPressed
-        lda #$04
-        bit JOYSTICK_2
-        bne .LeftNotPressed
-        jsr PlayerMoveLeft
+.PageBoundaryNotReached
+		inc VARIABLE2						;another char has been copied
+		beq .CopyFinished					;if VARIABLE2 is 0, 256 chars, ie the complete charset, is copied
+		
+		ldx #$00
+		jmp .CopyChar						;reset x for the next char
+		
+.CopyFinished
 		rts
 		
-.LeftNotPressed
-        lda #$08
-        bit JOYSTICK_2
-        bne .RightNotPressed
-        jsr PlayerMoveRight
-		rts
-		
-.RightNotPressed
-        lda #$10
-        bit JOYSTICK_2
-        bne .ButtonNotPressed
-        jsr PlayerButton
-
-.ButtonNotPressed
-		lda JOYSTICK_2
-		sta JOYSTICK_STATUS
-        rts
-
 ;===============================
-;PlayerMoveUp
-;will include code to check if move is possible later
+;CopySpriteData
+;copies raw sprite data to VIC bank from source at ZP_1
 ;===============================
-!zone PlayerMoveUp
-PlayerMoveUp
 
-		ldx #DIRECTION_UP
-		stx CHARACTER_CURRENT_DIRECTION
+!zone CopySpriteData
+CopySpriteData
 
-		ldx #ANIMATION_PLAYER_WALK_UP
-		stx CHARACTER_NEXT_ACTION
-
-        ldx #$00
-        jsr MoveSpriteUp
-        rts
-
-!zone PlayerMoveDown
-PlayerMoveDown
-
-		ldx #DIRECTION_DOWN
-		stx CHARACTER_CURRENT_DIRECTION
-
-		ldx #ANIMATION_PLAYER_WALK_DOWN
-		stx CHARACTER_NEXT_ACTION
+		lda #<SPRITE_DATA_BUFFER
+		sta ZEROPAGE_POINTER_2
+		lda #>SPRITE_DATA_BUFFER
+		sta ZEROPAGE_POINTER_2 + 1
 		
+		ldx #NUMBER_OF_SPRITES				;counter
+		stx VARIABLE2						;VARIABLE1 in use
 		ldx #$00
-        jsr MoveSpriteDown
-        rts
-
-!zone PlayerMoveLeft
-PlayerMoveLeft
-
-		ldx #DIRECTION_LEFT
-		stx CHARACTER_CURRENT_DIRECTION
-
-		ldx #ANIMATION_PLAYER_WALK_LEFT
-		stx CHARACTER_NEXT_ACTION
-
-        ldx #$00
-        jsr MoveSpriteLeft
-        rts
-
-!zone PlayerMoveRight
-PlayerMoveRight
-
-		ldx #DIRECTION_RIGHT
-		stx CHARACTER_CURRENT_DIRECTION
-
-		ldx #ANIMATION_PLAYER_WALK_RIGHT
-		stx CHARACTER_NEXT_ACTION
-
-        ldx #$00
-        jsr MoveSpriteRight
-        rts
-
-!zone PlayerButton
-PlayerButton
-
-		jsr TestDrawScreen
-		ldx #$00
-        jsr PlayerAction
-        rts
-
-;=====================================
-;MoveSpriteUp
-;expects x as sprite index
-;=====================================
-
-!zone MoveSpriteUp
-MoveSpriteUp
-        dec SPRITE_Y_POS,x
-        rts
-
-MoveSpriteDown
-        inc SPRITE_Y_POS,x
-        rts
-
-MoveSpriteLeft
-        dec SPRITE_X_POS,x
-		bpl .UpdateDone
-		
-		lda BIT_MASK,x
-		eor #$ff
-		and VIC_SPRITE_X_EXTEND
-		sta VIC_SPRITE_X_EXTEND
-		
-        rts
-
-MoveSpriteRight
-        inc SPRITE_X_POS,x
-		bne .UpdateDone
-		
-		lda BIT_MASK,x
-		ora VIC_SPRITE_X_EXTEND
-		sta VIC_SPRITE_X_EXTEND		
-		
-.UpdateDone
-        rts
-
-PlayerAction
-        inc VIC_SPRITE_COLOR_BASE,x
-        rts
-
-;====================================
-;UpdateSpritePositions
-;moves sprite pos from ram to vic reg
-;====================================
-
-!zone UpdateSpritePositions
-UpdateSpritePositions
-        ldx #$00            ;index
-.UpdateLoop
-
-        txa
-        asl                 ;sprite positions for x and y coords are interlaced, this gets the right index for the hw coord registers
-        tay                 
-
-        lda SPRITE_Y_POS,x
-        sta VIC_SPRITE_Y_COORD,y        ;Y coord does not need to be modified
-
-        lda SPRITE_X_POS,x
-        ;asl                 ;effectively doubles position, high bit now in carry
-        sta VIC_SPRITE_X_COORD,y            
-        ;ror VIC_SPRITE_X_EXTEND
-        inx
-        cpx #$08
-        bne .UpdateLoop
-
-        rts
-    
-;===========================
-;Keyboard testing
-;===========================
-	
-!zone OneKeyPressed
-OneKeyPressed
-		lda #ANIMATION_PLAYER_DANCE
-		sta VARIABLE1
-		ldx #$00
-		jsr ChangeAnimation
-		rts
-
-!zone TwoKeyPressed
-TwoKeyPressed
-		lda #ANIMATION_PLAYER_WALK_DOWN
-		sta VARIABLE1
-		ldx #$00
-		jsr ChangeAnimation
-		rts
-		
-!zone ThreeKeyPressed
-ThreeKeyPressed
-		lda #ANIMATION_PLAYER_WALK_LEFT
-		sta VARIABLE1
-		ldx #$00
-		jsr ChangeAnimation
-		rts
-		
-!zone FourKeyPressed
-FourKeyPressed
-		lda #ANIMATION_PLAYER_WALK_RIGHT
-		sta VARIABLE1
-		ldx #$00
-		jsr ChangeAnimation
-		rts
-	
-;==================================================================
-;       LEVEL FUNCTIONS
-;==================================================================
-
-;==========================
-;CopyScreenData
-;copies screen data to CURRENT_SCREEN
-;expects ZP1 to point to level data
-;==========================
-
-!zone CopyScreenData
-CopyScreenData
-		ldx #<CURRENT_SCREEN
-		stx ZEROPAGE_POINTER_2
-		ldx #>CURRENT_SCREEN
-		stx ZEROPAGE_POINTER_2 + 1
-		
 		ldy #$00
-.CopyLoop		
+		
+.CopyLoop
 		lda (ZEROPAGE_POINTER_1),y
 		sta (ZEROPAGE_POINTER_2),y
 		iny
-		cpy #$dc			;220 decimal, check if finished
+		inx
+		cpx #$40							;64 decimal, 1 sprite
+		bne .CopyLoop
+		
+		dec VARIABLE2
+		beq .CopyDone
+		
+		ldx #$00							;prepare counter for next sprite
+		
+		cpy #$00							;check if page boundary has been reached
+		bne	.CopyLoop
+		
+		inc ZEROPAGE_POINTER_1 + 1			;if so, increment pointer high bytes
+		inc ZEROPAGE_POINTER_2 + 1			
+		
+		jmp .CopyLoop
+		
+.CopyDone
+		rts
+		
+;================================
+;ClearScreen
+;clears the screen, setting all chars in buffer to '0', which in my tileset will be blank
+;================================
+
+!zone ClearScreen
+ClearScreen
+		ldx #$00
+		lda #$00							;blank space
+		
+.CopyLoop
+		sta SCREEN_CHAR_BUFFER,x
+		sta SCREEN_CHAR_BUFFER + 256, x
+		sta SCREEN_CHAR_BUFFER + 512, x
+		sta SCREEN_CHAR_BUFFER + 744, x
+		inx
 		bne .CopyLoop
 		
 		rts
 
-;==========================
-;DrawScreen
-;writes data from CURRENT_SCREEN
-;to the char memory
-;==========================
-!zone DrawScreen
-DrawScreen
-		ldx #$00
-		stx VARIABLE2
-		stx VARIABLE5		;counter for overall tiles drawn
-		ldy #$00			;set tile coords to 0,0 (in prep for DrawTile call), X will double as a counter
-		sty VARIABLE1
-		
-.DrawScreenLoop
-		lda CURRENT_SCREEN,x
-		sta VARIABLE3
+;=========================================================================
+;	LEVEL LOADING FUNCTIONS
+;=========================================================================
 
-		jsr DrawTile
+;==========================
+;LEVEL_LoadData
+;load screen data from raw memory to the current screen buffers
+;screen index should be stored in x (or a 'current_level' flag later)
+;===========================
+
+!zone LEVEL_LoadData						;TODO
+LEVEL_LoadData
+		txa
+		asl
+		tax									;pointers are 2 bytes, double it to get offset
+
+		lda DATA_LEVEL_POINTERS,x
+		sta ZEROPAGE_POINTER_7
+		lda DATA_LEVEL_POINTERS + 1,x
+		sta ZEROPAGE_POINTER_7 + 1			;pointer to start of data pointers
 		
+		ldy #$00
+		lda (ZEROPAGE_POINTER_7),y
+		sta ZEROPAGE_POINTER_1
+		iny
+		lda (ZEROPAGE_POINTER_7),y
+		sta ZEROPAGE_POINTER_1 + 1			;start of tile data
+		iny
+		lda (ZEROPAGE_POINTER_7),y
+		sta ZEROPAGE_POINTER_2
+		iny
+		lda (ZEROPAGE_POINTER_7),y
+		sta ZEROPAGE_POINTER_2 + 1			;start of palette data
+		iny
+		lda (ZEROPAGE_POINTER_7),y
+		sta ZEROPAGE_POINTER_3
+		iny
+		lda (ZEROPAGE_POINTER_7),y
+		sta ZEROPAGE_POINTER_3 + 1			;start of tile flag data
+		
+		lda #<CURRENT_SCREEN_TILE_DATA
+		sta ZEROPAGE_POINTER_4
+		lda #>CURRENT_SCREEN_TILE_DATA
+		sta ZEROPAGE_POINTER_4 + 1
+		
+		lda #<CURRENT_SCREEN_PALETTE_DATA
+		sta ZEROPAGE_POINTER_5
+		lda #>CURRENT_SCREEN_PALETTE_DATA
+		sta ZEROPAGE_POINTER_5 + 1
+		
+		lda #<CURRENT_SCREEN_ATTRIBUTE_DATA
+		sta ZEROPAGE_POINTER_6
+		lda #>CURRENT_SCREEN_ATTRIBUTE_DATA
+		sta ZEROPAGE_POINTER_6 + 1			;destination pointers set
+		
+		ldy #$00
+		
+.LoadData
+		lda (ZEROPAGE_POINTER_1),y
+		sta (ZEROPAGE_POINTER_4),y			;copy tile data
+		
+		lda (ZEROPAGE_POINTER_2),y
+		sta (ZEROPAGE_POINTER_5),y			;copy palette data
+		
+		;lda (ZEROPAGE_POINTER_3),y
+		;sta (ZEROPAGE_POINTER_6),y			;copy attribute data
+		
+		iny
+		cpy #$dc							;220 in decimal, number of tiles
+		bne .LoadData
+		
+		rts									;use linux program convert.c to set a default palette
+
+;==========================
+;LEVEL_DrawScreen
+;draws a full screen of data, uses LEVEL_DrawTile
+;assumes data is in CURRENT_SCREEN... buffers
+;==========================
+
+!zone LEVEL_DrawScreen						;TODO
+LEVEL_DrawScreen
+
+		ldx #$00							
+		stx VARIABLE1						;column counter
+		stx VARIABLE2						;row counter
+		stx VARIABLE5						;total counter
+		
+		
+.DrawLoop
+		ldx VARIABLE5
+		lda CURRENT_SCREEN_TILE_DATA,x
+		sta VARIABLE3
+		lda CURRENT_SCREEN_PALETTE_DATA,x
+		sta VARIABLE4
+		
+		jsr LEVEL_DrawTile
+		
+		inc VARIABLE5
 		ldy VARIABLE1
 		iny
-		cpy #$14			;20 in decimal (check if we've finished drawing a row)
+		cpy #$14							;20, check if a row has been fully drawn
 		bne .NoRowIncrement
 		
-		inc VARIABLE2		;draw next row
 		ldy #$00
-				
+		inc VARIABLE2
+		ldx VARIABLE2
+		cpx #$0b							;11 in decimal, check if all rows are drawn
+		beq .DrawFinished
+		
 .NoRowIncrement
 		sty VARIABLE1
-		inc VARIABLE5
-		ldx VARIABLE5
-		cpx #$db			;220 in decimal, check if the level is finished
-		bne .DrawScreenLoop
-		
-		rts
-		
-;==========================
-;DrawTile
-;expects tile screen x-coord in VARIABLE1, y coord in VARIABLE2
-;and the tile type in VARIABLE3
-;==========================
-
-!zone DrawTile
-DrawTile
-        ldy VARIABLE2                   ;row index
-        lda SCREEN_ROW_LOW_BYTE,y
-        sta ZEROPAGE_POINTER_1
-        sta ZEROPAGE_POINTER_2
-        lda SCREEN_ROW_HIGH_BYTE,y
-        sta ZEROPAGE_POINTER_1 + 1      ;ZP1 now points to the upper left hand corner of the first tile in the given row
-
-        clc
-        adc #( ( VIC_COLOR_RAM - SCREEN_CHAR_BUFFER ) & 0xff00 ) >> 8
-        sta ZEROPAGE_POINTER_2 + 1
-
-        lda VARIABLE1
-        asl                             ;VARIABLE1 contains the tile X-Coord, but the tiles are 2x2, so double this to get the actual screen position
-        tay
-
-        lda VARIABLE3
-        asl
-        asl                             ;tiles are stored in blocks of 4
-        
-        tax
-
-        sta (ZEROPAGE_POINTER_1),y
-        lda CHARSET_COLOR_DATA,x
-        sta (ZEROPAGE_POINTER_2),y
-        inx
-        iny
-        txa
-        sta (ZEROPAGE_POINTER_1),y
-        lda CHARSET_COLOR_DATA,x
-        sta (ZEROPAGE_POINTER_2),y
-        tya
-        clc
-        adc #$27                        ;39 in decimal, skip a line
-        tay
-        inx
-        txa
-        sta (ZEROPAGE_POINTER_1),y
-        lda CHARSET_COLOR_DATA,x
-        sta (ZEROPAGE_POINTER_2),y
-        inx
-        iny
-        txa
-        sta (ZEROPAGE_POINTER_1),y
-        lda CHARSET_COLOR_DATA,x
-        sta (ZEROPAGE_POINTER_2),y
-
-        rts
-
-
-;==================================================================
-;		ANIMATION FUNCTIONS
-;==================================================================
-
-;==================
-;UpdateAnimations
-;loops through sprites, updating frames where necessary
-;==================
-
-!zone UpdateAnimations
-UpdateAnimations
-		ldx #$00			;sprite index
-		
-.CheckForChange
-		lda CHARACTER_NEXT_ACTION,x
-		cmp CHARACTER_CURRENT_ACTION,x
-		beq .UpdateLoop
-		
-		sta VARIABLE1
-		jsr ChangeAnimation
-		
-.UpdateLoop
-		jsr UpdateCurrentFrame
-		inx
-		cpx #$08
-		bne .UpdateLoop
+		jmp .DrawLoop
+		 
+.DrawFinished
 		rts
 
-;==================
-;UpdateCurrentFrame
-;expects x as sprite index
-;==================
+;==========================
+;LEVEL_DrawTile
+;draws a tile to coords given in VARIABLE1 and VARIABLE2 (x, y)
+;tile type in VARIABLE3 and tile palette in VARIABLE4
+;==========================
 
-!zone UpdateCurrentFrame
-UpdateCurrentFrame
-		
-		dec SPRITE_ANIMATION_TIMERS,x
-		bne .NoUpdateNeededYet				;check if frame needs to be updated
-		
-		lda SPRITE_ANIMATION_CYCLE,x
-		asl
-		tay
-		
-		lda ANIMATION_LIST,y
+!zone LEVEL_DrawTile
+LEVEL_DrawTile
+		ldy VARIABLE2						;get row index
+		lda SCREEN_ROW_LOW_BYTE,y			
 		sta ZEROPAGE_POINTER_1
-		lda ANIMATION_LIST + 1,y
-		sta ZEROPAGE_POINTER_1 + 1			;get pointer to current animation being played
+		sta ZEROPAGE_POINTER_2				;pointer 2 will write to colour ram, same offset as char buffer
+		lda SCREEN_ROW_HIGH_BYTE,y			;column index
+		sta ZEROPAGE_POINTER_1 + 1			;ZP1 now points to upper left hand corner of the first tile in the 
+											;row given by VARIABLE2
 		
-		ldy #$00
+		clc
+		adc #( ( VIC_COLOR_RAM - SCREEN_CHAR_BUFFER ) & 0xff00 ) >> 8	;get high byte of color ram for tile
+		sta ZEROPAGE_POINTER_2 + 1
 		
-		lda (ZEROPAGE_POINTER_1),y			;this will be the timer for the animation
-		sta SPRITE_ANIMATION_TIMERS,x		;x still contains sprite index
-		inc SPRITE_FRAME_INDEX,x
-		ldy SPRITE_FRAME_INDEX,x
-		
-		lda (ZEROPAGE_POINTER_1),y			;get next frame
-		bne .NoRestartNeeded				;a value of 0 indicates the sequence has finished and needs to restart
-		
-		ldy #$01							;first frame has offset of 1, not zero
-		lda (ZEROPAGE_POINTER_1),y
-		tay
-		lda #$01
-		sta SPRITE_FRAME_INDEX,x
-		tya
-		
-.NoRestartNeeded
-		sta SPRITE_CURRENT_FRAME,x					
-		
-.NoUpdateNeededYet
-		rts
-
-;=======================
-;ChangeAnimation
-;expects x as sprite index, VARIABLE1 as new animation
-;=======================
-!zone ChangeAnimation
-ChangeAnimation
 		lda VARIABLE1
-		sta SPRITE_ANIMATION_CYCLE,x
+		asl 								;VARIABLE1 contains X-coord, double this to get actual char index
+		tay									;(tiles are 2x2)
 		
+		lda VARIABLE3
 		asl
-		tay
-		lda ANIMATION_LIST,y
-		sta ZEROPAGE_POINTER_1
-		lda ANIMATION_LIST + 1,y
-		sta ZEROPAGE_POINTER_1 + 1
+		asl									;4 chars make a tile, stored linearly. Multiply index by 4 to get
+											;to the start of the tile data
+											
+		tax
 		
-		ldy #$00
-		lda (ZEROPAGE_POINTER_1),y
-		sta SPRITE_ANIMATION_TIMERS,x
+		;==========================
+		;write top 2 chars of tile
+		;==========================
 		
+		sta (ZEROPAGE_POINTER_1),y
+		lda VARIABLE4
+		sta (ZEROPAGE_POINTER_2),y
+		inx
 		iny
-		lda (ZEROPAGE_POINTER_1),y
-		sta SPRITE_CURRENT_FRAME,x
+		txa
+		sta (ZEROPAGE_POINTER_1),y
+		lda VARIABLE4
+		sta (ZEROPAGE_POINTER_2),y
 		
-		lda #$01
-		sta SPRITE_FRAME_INDEX,x
+		;==============================
+		;set pointer to bottom 2 chars
+		;==============================
 		
-		rts
+		tya
+		clc
+		adc #$27							;39 in decimal, skip a line
+		tay
 		
-;===================
-;CopySpriteFrameData
-;moves sprite index from memory to vic register
-;===================
-
-!zone CopySpriteFrameData
-CopySpriteFrameData
-		ldx #$00
-.CopyLoop
-		lda SPRITE_CURRENT_FRAME,x
-		sta SPRITE_POINTER_BASE,x
+		;==============================
+		;write data for bottom 2 chars
+		;==============================
+		
 		inx
-		cpx #$08
-		bne .CopyLoop
-		
-		rts
-
-;==================================================================
-;       LOGIC FUNCTIONS
-;==================================================================
-
-;=======================
-;UpdatePlayerAction
-;=======================
-
-!zone UpdateActions
-UpdateActions
-
-		ldx #$00
-
-.UpdateLoop
-		lda CHARACTER_NEXT_ACTION,x
-		sta CHARACTER_CURRENT_ACTION,x
+		txa
+		sta (ZEROPAGE_POINTER_1),y
+		lda VARIABLE4
+		sta (ZEROPAGE_POINTER_2),y
 		inx
-		cpx #$08
-		bne .UpdateLoop
+		iny
+		txa
+		sta (ZEROPAGE_POINTER_1),y
+		lda VARIABLE4
+		sta (ZEROPAGE_POINTER_2),y
+
 		rts
-
 		
-;==================================================================
-;       MATHS FUNCTIONS
-;==================================================================
-
-;=====================================
-;Multiply
-;takes operands in MULTI1 and MULTI2
-;preferably put lower number in MULTI1
-;result stored in MULTIL and MULTIH
-;=====================================
-
-!zone Multiply
-Multiply
-        ldx #$00
-        stx MULTIL
-        stx MULTIH
-        txa             ;zero result and accumulator in prep
-
-        ldx MULTI2
-        beq .MultiplyDone
-        ldx MULTI1
-        beq .MultiplyDone       ;if either operand is 0, return immediately
-
-        clc                     ;otherwise, clear the carry before beginning
-
-.MultiplyLoop
-        adc MULTI2              ;accumulator has been zeroed, continue adding MULTI2 MULTI1 times
-        bcc .NoOverflow
-
-        inc MULTIH              ;increment the high byte if accumulator overflows
-
-.NoOverflow
-        dex
-        bne .MultiplyLoop       ;if x is zero, we've finished
-
-.MultiplyDone
-        sta MULTIL              ;accumulator holds low byte of the result, high byte is set during routine
-        rts
-
-;==================================================================
-;       TEST FUNCTIONS
-;==================================================================
-
-TestDrawScreen
-		ldx #<SCREEN_2_DATA
-		stx ZEROPAGE_POINTER_1
-		ldx #>SCREEN_2_DATA
-		stx ZEROPAGE_POINTER_1 + 1
-		
-		jsr CopyScreenData
-		jsr DrawScreen
-		
-		rts
-
-;==================================================================
-;       DATA
-;==================================================================
-
-BIT_MASK
-		!byte $01, $02, $04, $08, $10, $20, $40, $80
-
-JOYSTICK_STATUS
-		!byte $ff
-
-CHARACTER_CURRENT_DIRECTION
-		!byte $02, $00, $00, $00, $00, $00, $00, $00
-		
-CHARACTER_CURRENT_ACTION
-		!byte $00, $00, $00, $00, $00, $00, $00, $00
-		
-CHARACTER_NEXT_ACTION
-		!byte $00, $00, $00, $00, $00, $00, $00, $00
+;=========================================================================
+;	TEST FUNCTIONS
+;=========================================================================
 
 ;==========================
-;	SCREEN DATA
+;TEST_Chars
+;==========================
+
+!zone TEST_Chars
+TEST_Chars
+		ldx #$00
+		
+.TestLoop
+		txa
+		sta SCREEN_CHAR_BUFFER,x
+		inx
+		bne .TestLoop
+		
+		rts
+
+;==========================
+;TEST_Sprites
+;check sprites have loaded
+;==========================
+
+!zone TEST_Sprites
+TEST_Sprites
+		lda #$01
+		sta VIC_SPRITE_ENABLE_REGISTER
+		sta VIC_SPRITE_MULTICOLOR_REGISTER
+		
+		lda #$40
+		sta SPRITE_POINTER_BASE
+		
+		lda #GREEN
+		sta VIC_SPRITE_COLOR_BASE
+	
+		lda #YELLOW
+		sta VIC_SPRITE_COLOR_2
+		
+		lda #ORANGE
+		sta VIC_SPRITE_COLOR_1
+		
+		lda #$b0			;64
+		sta VIC_SPRITE_X_COORD
+		sta VIC_SPRITE_Y_COORD
+		
+		rts
+
+;=========================
+;TEST_DrawTile
+;draws a tile, type 2, palette 10 ($0a) at pos (5, 2)
+;=========================
+
+!zone TEST_DrawTile
+TEST_DrawTile
+
+
+
+		lda #$05
+		sta VARIABLE1					;x coord
+		lda #$02
+		sta VARIABLE2					;y coord
+		
+		lda #$03
+		sta VARIABLE3					;type
+		
+		lda #$0b
+		sta VARIABLE4					;palette
+		
+		jsr LEVEL_DrawTile
+		
+		rts
+		
+;=========================
+;TEST_FrameTimer
+;flashes the border to show main loop is running
+;=========================
+
+!zone TEST_FrameTimer
+TEST_FrameTimer
+		inc VIC_BORDER_COLOR
+		rts
+
+;=========================
+;TEST_LevelSwitch
+;changes screen at the touch of a button
+;=========================
+!zone TEST_LevelSwitch
+TEST_LevelSwitch
+        lda JOYSTICK_2
+        and #%00010000                  ;check button
+        bne .NoButton                   ;a '0' means the button IS pressed
+
+        ldx #$01                        ;index of second screen
+        jsr LEVEL_LoadData
+        jsr LEVEL_DrawScreen
+
+.NoButton
+        rts
+		
+;=========================================================================
+;	CURRENT SCREEN DATA
+;=========================================================================
+
+;Each number in this table refers to the tile that should be drawn
+CURRENT_SCREEN_TILE_DATA
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+
+;The primary colour for each tile on screen
+CURRENT_SCREEN_PALETTE_DATA
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+
+;each tile will have 8 flags - to be finalised, things like will it block a characters movement (wall) or not (grass), is it a door etc
+CURRENT_SCREEN_ATTRIBUTE_DATA
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+
+CURRENT_SCREEN_BG_1
+		!byte $00
+		
+CURRENT_SCREEN_BG_2
+		!byte $00
+		
+;any extra data that might be needed - such as number and positions of npcs
+CURRENT_SCREEN_GENERAL_DATA
+
+;==========================
+;	SCREEN DATA - A POINTER LOOKUP TABLE
 ;==========================
 
 SCREEN_ROW_LOW_BYTE
@@ -1090,132 +745,46 @@ SCREEN_ROW_HIGH_BYTE
         !byte ( ( SCREEN_CHAR_BUFFER + 640 ) & 0xff00 ) >> 8
         !byte ( ( SCREEN_CHAR_BUFFER + 720 ) & 0xff00 ) >> 8
         !byte ( ( SCREEN_CHAR_BUFFER + 800 ) & 0xff00 ) >> 8
-
-SPRITE_X_POS
-        !byte $00, $00, $00, $00, $00, $00, $00, $00
-
-SPRITE_Y_POS
-        !byte $00, $00, $00, $00, $00, $00, $00, $00
-
-SPRITE_CURRENT_FRAME									;actual pointer to sprite definition
-		!byte $00, $00, $00, $00, $00, $00, $00, $00
 		
-SPRITE_FRAME_INDEX										;how far into an animation cycle a sprite is
-		!byte $01, $00, $00, $00, $00, $00, $00, $00
 		
-SPRITE_ANIMATION_TIMERS
-		!byte $08, $00, $00, $00, $00, $00, $00, $00
-		
-SPRITE_ANIMATION_CYCLE
-		!byte $01, $00, $00, $00, $00, $00, $00, $00
-
-CHARSET_COLOR_DATA
-        !byte $00, $00, $00, $00, $05, $05, $05, $05, $0a, $0a, $0a, $0a, $0b, $0b, $0b, $0b
-		!byte $0e, $0e, $0e, $0e, $07, $07, $07, $07, $07, $07, $07, $07, $09, $09, $09, $09
-		!byte $0f, $0f, $0f, $0f, $0d, $0d, $0d, $0d, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
-		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
-		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
-		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
-		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
-		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
-		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
-		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
-		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
-		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
-		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
-		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
-		!byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
-		!byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
-
-		
+;=========================================================================
+;	EXTERNAL DATA
+;=========================================================================
 
 CHARSET_DATA
-        !binary "graphics/rpgset1.chr"
+		!binary "graphics/rpgset1.chr"
 
 SPRITE_DATA
-        !binary "graphics/sprites.spr"
-
-CURRENT_SCREEN
-		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-
-;=============================
+		!binary "graphics/sprites.spr"
+		
+		
+;======================
 ;	LEVEL DATA
-;=============================
-		
-SCREEN_1_DATA
-		!binary "levels/screen1.scn"
-		
-SCREEN_2_DATA
-		!binary "levels/screen2.scn"
-		
-;==================================================================
-;	ANIMATION DATA
-;==================================================================
+;======================
 
-;=============================
-;	ANIMATIONS
-;=============================
+DATA_LEVEL_POINTERS
+        !word DATA_LEVEL_0_POINTER
+        !word DATA_LEVEL_1_POINTER
+        !word 0
 
-ANIMATION_LIST
-		!word 0x0000						;null pointer
-		!word ANIM_PLAYER_STAND_UP
-		!word ANIM_PLAYER_STAND_DOWN
-		!word ANIM_PLAYER_STAND_LEFT
-		!word ANIM_PLAYER_STAND_RIGHT
-		!word ANIM_PLAYER_WALK_UP
-		!word ANIM_PLAYER_WALK_DOWN
-		!word ANIM_PLAYER_WALK_LEFT
-		!word ANIM_PLAYER_WALK_RIGHT
-		!word ANIM_PLAYER_TALK
-		!word ANIM_PLAYER_DANCE
+DATA_LEVEL_0_POINTER
+        !word DATA_LEVEL_0
+        !word DATA_LEVEL_0 + 220
+        !word DATA_LEVEL_0 + 440
 
-ANIM_PLAYER_STAND_UP
-		!byte $08
-		!byte $4b, $00						;one frame for standing
+DATA_LEVEL_1_POINTER
+        !word DATA_LEVEL_1
+        !word DATA_LEVEL_1 + 220
+        !word DATA_LEVEL_1 + 440
 
-ANIM_PLAYER_STAND_DOWN
-		!byte $08
-		!byte $40, $00
+DATA_LEVEL_0
+        !binary "levels/level0.lvl"
+
+DATA_LEVEL_1
+        !binary "levels/level1.lvl"
+
+;TEST_TILE_DATA
+		;!binary "levels/screen1.scn"
 		
-ANIM_PLAYER_STAND_LEFT
-		!byte $08
-		!byte $49, $00
-		
-ANIM_PLAYER_STAND_RIGHT
-		!byte $08
-		!byte $46, $00
-		
-ANIM_PLAYER_WALK_UP
-		!byte $06
-		!byte $4c, $4b, $4d, $4b, $00
-		
-ANIM_PLAYER_WALK_DOWN
-		!byte $03
-		!byte $41, $42, $41, $40, $43, $44, $43, $40, $00
-		
-ANIM_PLAYER_WALK_LEFT
-		!byte $08
-		!byte $48, $49, $4a, $49, $00
-		
-ANIM_PLAYER_WALK_RIGHT
-		!byte $08
-		!byte $45, $46, $47, $46, $00
-		
-ANIM_PLAYER_TALK
-		!byte $06
-		!byte $4d, $4e, $00
-		
-ANIM_PLAYER_DANCE
-		!byte $0a							;Timer
-		!byte $50, $51, $52, $51, $00 		;Frame List
-	
+;TEST_PALETTE_DATA
+;		!binary "levels/TESTpalette"
