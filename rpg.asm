@@ -2859,50 +2859,50 @@ DATA_LEVEL_21_POINTER
         !word DATA_LEVEL_21 + 716
 
 DATA_LEVEL_0
-        !source "newlvls/grid00.txt"
+        !source "map/overworld/overworld00.txt"
 DATA_LEVEL_1
-        !source "newlvls/grid01.txt"
+        !source "map/overworld/overworld01.txt"
 DATA_LEVEL_2
-        !source "newlvls/grid02.txt"
+        !source "map/overworld/overworld02.txt"
 DATA_LEVEL_3
-        !source "newlvls/grid03.txt"
+        !source "map/overworld/overworld03.txt"
 DATA_LEVEL_4
-        !binary "testlvls/levele.lvl"
+        !binary "map/overworld/overworld04.lvl"
 DATA_LEVEL_5
-        !binary "testlvls/levelf.lvl"
+        !binary "map/overworld/overworld05.lvl"
 DATA_LEVEL_6
-        !binary "testlvls/levelg.lvl"
+        !binary "map/overworld/overworld06.lvl"
 DATA_LEVEL_7
-        !binary "testlvls/levelh.lvl"
+        !binary "map/overworld/overworld07.lvl"
 DATA_LEVEL_8
-        !binary "testlvls/leveli.lvl"
+        !binary "map/overworld/overworld08.lvl"
 DATA_LEVEL_9
-        !binary "testlvls/levelj.lvl"
+        !binary "map/overworld/overworld09.lvl"
 DATA_LEVEL_10
-        !binary "testlvls/levelk.lvl"
+        !binary "map/overworld/overworld10.lvl"
 DATA_LEVEL_11
-        !binary "testlvls/levell.lvl"
+        !binary "map/overworld/overworld11.lvl"
 DATA_LEVEL_12
-        !binary "testlvls/levelm.lvl"
+        !binary "map/overworld/overworld12.lvl"
 DATA_LEVEL_13
-        !binary "testlvls/leveln.lvl"
+        !binary "map/overworld/overworld13.lvl"
 DATA_LEVEL_14
-        !binary "testlvls/levelo.lvl"
+        !binary "map/overworld/overworld14.lvl"
 DATA_LEVEL_15
-        !binary "testlvls/levelp.lvl"
+        !binary "map/overworld/overworld15.lvl"
         
 DATA_LEVEL_16
-        !source "newlvls/grid00indoor1.txt"
+        !source "map/interior/indoor1.txt"
 DATA_LEVEL_17
-        !source "newlvls/grid02indoor1a.txt"
+        !source "map/interior/indoor2.txt"
 DATA_LEVEL_18
-        !source "newlvls/grid02indoor1b.txt"
+        !source "map/interior/indoor3.txt"
 DATA_LEVEL_19
-        !source "newlvls/grid02indoor2.txt"
+        !source "map/interior/indoor4.txt"
 DATA_LEVEL_20
-        !source "newlvls/grid02indoor3.txt"
+        !source "map/interior/indoor5.txt"
 DATA_LEVEL_21
-        !source "newlvls/grid03indoor1.txt"
+        !source "map/interior/indoor6.txt"
 
 ;=========================================================================
 ;	EXTERNAL DATA
