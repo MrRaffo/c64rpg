@@ -17,6 +17,8 @@
 
 ;ver 8: added changing sprite priorities and extended x coords
 
+;ver 9: tested adding multiple sprites
+
 ;================================================
 ;CONSTANTS
 ;================================================
@@ -25,9 +27,9 @@
 BLACK                           = $00
 WHITE                           = $01
 RED                             = $02
-CYAN                            = $03
+CYAN                      	    = $03
 VIOLET                          = $04
-GREEN                           = $05
+GREEN                         	= $05
 BLUE                            = $06
 YELLOW                          = $07
 ORANGE                          = $08
@@ -40,8 +42,8 @@ LIGHT_BLUE                      = $0e
 LIGHT_GREY                      = $0f
 
 ;CPU
-CIA_PROCESSOR_PORT              = $01       ;set ram/rom visibility
-CIA_PRA                         = $dd00     ;set vic bank
+CIA_PROCESSOR_PORT              = $01           ;set ram/rom visibility
+CIA_PRA                         = $dd00         ;set vic bank
 JOYSTICK_2                      = $dc00
 JOYSTICK_1                      = $dc01
 
@@ -108,6 +110,10 @@ SPRITE_END                      = SPRITE_BASE + NUMBER_OF_SPRITES
 SPRITE_POINTER_BASE             = SCREEN_CHAR_BUFFER + $3f8     ;1016 bytes after screen buffer
 SPRITE_DATA_BUFFER              = $d000             ;put sprite definitions here
 
+;WORLD CONSTANTS
+OVERWORLD_WIDTH                 = 4
+OVERWORLD_HEIGHT                = 4
+
 ;LEVEL CONSTANTS
 LEVEL_TILE_WIDTH                = 20                ;tiles are 2x2
 LEVEL_TILE_HEIGHT               = 11
@@ -129,6 +135,8 @@ DIRECTION_LEFT					= 3
 DIRECTION_RIGHT					= 4
 
 ;ACTION INDICES
+ACTION_GENERAL_IDLE				= 0
+
 ACTION_PLAYER_STAND_UP			= 1
 ACTION_PLAYER_STAND_DOWN		= 2
 ACTION_PLAYER_STAND_LEFT		= 3
@@ -140,7 +148,12 @@ ACTION_PLAYER_WALK_RIGHT		= 8
 ACTION_PLAYER_TALK				= 9
 ACTION_PLAYER_DANCE				= 10
 
-ACTION_GENERAL_IDLE				= 11
+ACTION_SHEEP_STAND_LEFT		    = 11
+ACTION_SHEEP_STAND_RIGHT		= 12
+ACTION_SHEEP_WALK_LEFT	    	= 13
+ACTION_SHEEP_WALK_RIGHT	    	= 14
+ACTION_SHEEP_EAT_LEFT	    	= 15
+ACTION_SHEEP_EAT_RIGHT	    	= 16
 
 ;ANIMATION INDICES
 ANIMATION_PLAYER_STAND_UP		= 1
@@ -256,7 +269,7 @@ ANIMATION_SHEEP_EAT_RIGHT		= 16
 		lda #MIDDLE_GREY
 		sta VIC_BGCOLOR_2
 
-		ldx #$01							;LEVEL index
+		ldx #$00							;LEVEL index
 		jsr LEVEL_LoadData
 		jsr LEVEL_DrawScreen
 
@@ -270,7 +283,7 @@ ANIMATION_SHEEP_EAT_RIGHT		= 16
         ldx #$01
         stx VIC_SPRITE_ENABLE_REGISTER
 
-        ldx #GREEN
+        ldx #LIGHT_GREY
 		stx SPRITE_UNIQUE_COLOR
         stx VIC_SPRITE_COLOR_BASE
 
@@ -313,15 +326,19 @@ ANIMATION_SHEEP_EAT_RIGHT		= 16
 		
 !zone GameLoop
 GameLoop
-		;jsr TEST_FrameTimer					;flash border
+		;jsr TEST_FrameTimer				;flash border
 
-        jsr TEST_LevelSwitch                ;checks button, changes screen data on press
+		inc $d020
+		
+        ;jsr TEST_LevelSwitch               ;checks button, changes screen data on press
 
 		jsr SYSTEM_HandleInput
 		
 		jsr SYSTEM_HandleLogic
 				
 		jsr LOGIC_UpdateSpriteAction
+		
+		dec $d020
 		
 		jsr SYSTEM_WaitFrame    			;wait until frame is finished
 		
@@ -481,6 +498,127 @@ ClearScreen
 ;=========================================================================
 ;	LEVEL LOADING FUNCTIONS
 ;=========================================================================
+
+;==========================
+;LEVEL_PlayerChangeScreen
+;player has walked to the edge of the screen to trigger movement to the next area
+;the direction they are travelling in is stored in VARIABLE1
+;==========================
+!zone LEVEL_PlayerChangeScreen
+LEVEL_PlayerChangeScreen
+        lda VARIABLE1
+        
+        cmp #DIRECTION_UP
+        beq .GetScreenUp
+
+        cmp #DIRECTION_DOWN
+        beq .GetScreenDown
+
+        cmp #DIRECTION_LEFT
+        beq .GetScreenLeft
+
+        cmp #DIRECTION_RIGHT
+        beq .GetScreenRight
+
+.GetScreenUp
+        ldx SPRITE_TILE_X_POSITION
+        stx VARIABLE1
+        ldx #(LEVEL_TILE_HEIGHT-1)
+        stx VARIABLE2
+
+        ldx #$00
+
+        jsr LOGIC_PlaceSpriteInTile
+
+        dec PLAYER_WORLD_COORD + 1      ;decrease y coord
+        ldx PLAYER_WORLD_COORD + 1
+        stx MULTI1
+        ldx #(OVERWORLD_WIDTH)
+        stx MULTI2
+
+        jsr MATHS_Multiply
+        lda MULTIL
+        clc
+        adc PLAYER_WORLD_COORD
+
+        tax
+        jmp .LoadNewScreen
+
+.GetScreenDown
+        ldx SPRITE_TILE_X_POSITION
+        stx VARIABLE1
+        ldx #$00
+        stx VARIABLE2
+
+        jsr LOGIC_PlaceSpriteInTile
+
+        inc PLAYER_WORLD_COORD + 1
+        ldx PLAYER_WORLD_COORD + 1
+        stx MULTI1
+        ldx #(OVERWORLD_WIDTH)
+        stx MULTI2
+
+        jsr MATHS_Multiply
+        lda MULTIL
+        clc
+        adc PLAYER_WORLD_COORD
+
+        tax
+        jmp .LoadNewScreen
+
+.GetScreenLeft
+        ldx SPRITE_TILE_Y_POSITION
+        stx VARIABLE2
+        ldx #(LEVEL_TILE_WIDTH - 1)
+        stx VARIABLE1
+
+        ldx #$00
+
+        jsr LOGIC_PlaceSpriteInTile
+
+        dec PLAYER_WORLD_COORD
+        ldx PLAYER_WORLD_COORD + 1
+        stx MULTI1
+        ldx #(OVERWORLD_WIDTH)
+        stx MULTI2
+
+        jsr MATHS_Multiply
+
+        lda MULTIL
+        clc
+        adc PLAYER_WORLD_COORD
+
+        tax
+        jmp .LoadNewScreen
+
+.GetScreenRight
+        ldx SPRITE_TILE_Y_POSITION
+        stx VARIABLE2                   ;players new x coord, as they will be entering from the left
+        ldx #$00
+        stx VARIABLE1
+
+        jsr LOGIC_PlaceSpriteInTile
+
+        inc PLAYER_WORLD_COORD          ;increase players world x coord
+        ldx PLAYER_WORLD_COORD + 1      ;player Y coord
+        stx MULTI1
+        ldx #(OVERWORLD_WIDTH)
+        stx MULTI2
+
+        jsr MATHS_Multiply              ;get absolute reference of next screen
+
+        lda MULTIL
+        clc
+        adc PLAYER_WORLD_COORD
+        
+        tax
+        jmp .LoadNewScreen
+
+.LoadNewScreen
+        jsr LEVEL_LoadData
+        jsr LEVEL_DrawScreen
+
+        rts
 
 ;==========================
 ;LEVEL_LoadData
@@ -816,7 +954,7 @@ LOGIC_PlayerMoveUp
 .CheckCanMoveUp
 		lda SPRITE_TILE_Y_POSITION,x
 		cmp #$00
-		beq .NoMoveAvailable			;TODO this is a special case - change the screen
+		beq .CheckScreenUp
 		
 		sta MULTI1
 		dec MULTI1						;need data for tile above player
@@ -866,6 +1004,16 @@ LOGIC_PlayerMoveUp
 
 .NoMoveAvailable		
 		rts								;if we can't move up, don't, and return to program
+
+.CheckScreenUp
+        lda PLAYER_WORLD_COORD+1
+        cmp #$00
+        beq .NoMoveAvailable            ;if we're at the top of the overworld, we can't go any further
+
+        lda #DIRECTION_UP
+        sta VARIABLE1
+
+        jmp LEVEL_PlayerChangeScreen
 		
 		
 ;================================================
@@ -900,7 +1048,7 @@ LOGIC_PlayerMoveDown
 .CheckCanMoveDown
 		lda SPRITE_TILE_Y_POSITION,x
 		cmp #(LEVEL_TILE_HEIGHT - 1)
-		beq .NoMoveAvailable
+		beq .CheckScreenDown
 		
 		sta MULTI1
 		inc MULTI1						;get coords of tile below sprite
@@ -947,6 +1095,15 @@ LOGIC_PlayerMoveDown
 .NoMoveAvailable
 		rts
 
+.CheckScreenDown
+        lda PLAYER_WORLD_COORD + 1
+        cmp #(OVERWORLD_HEIGHT - 1)
+        beq .NoMoveAvailable
+
+        lda #DIRECTION_DOWN
+        sta VARIABLE1
+
+        jmp LEVEL_PlayerChangeScreen
 		
 ;================================================
 ;LOGIC_PlayerMoveLeft
@@ -980,7 +1137,7 @@ LOGIC_PlayerMoveLeft
 .CheckCanMoveLeft
 		lda SPRITE_TILE_X_POSITION,x
 		cmp #$00
-		beq .NoMoveAvailable				;at the edge of the screen
+		beq .CheckScreenLeft				;at the edge of the screen
 
 		lda SPRITE_TILE_Y_POSITION,x
 		sta MULTI1
@@ -1017,7 +1174,17 @@ LOGIC_PlayerMoveLeft
 .NoMoveAvailable
 		rts
 		
-		
+.CheckScreenLeft
+        lda PLAYER_WORLD_COORD
+        cmp #$00
+        beq .NoMoveAvailable
+
+        lda #DIRECTION_LEFT
+        sta VARIABLE1
+
+        jmp LEVEL_PlayerChangeScreen
+
+
 ;================================================
 ;LOGIC_PlayerMoveRight
 ;================================================
@@ -1050,7 +1217,7 @@ LOGIC_PlayerMoveRight
 .CheckCanMoveRight
 		lda SPRITE_TILE_X_POSITION,x
 		cmp #(LEVEL_TILE_WIDTH - 1)
-		beq .NoMoveAvailable
+		beq .CheckNextScreen            ;check if player can transition to a new screen
 		
 		lda SPRITE_TILE_Y_POSITION,x
 		sta MULTI1
@@ -1083,19 +1250,27 @@ LOGIC_PlayerMoveRight
 		lda CURRENT_SCREEN_ATTRIBUTE_DATA,y
 		and #$01
 		beq .CanMoveRight
-		
+
 .NoMoveAvailable
-		rts
+        rts
+
+.CheckNextScreen
+        lda PLAYER_WORLD_COORD
+        cmp #(OVERWORLD_WIDTH - 1)
+        beq .NoMoveAvailable
+
+        lda #DIRECTION_RIGHT
+        sta VARIABLE1
+
+        jmp LEVEL_PlayerChangeScreen
+
 		
 ;================================================
 ;LOGIC_PlayerButton
 ;================================================
 !zone LOGIC_PlayerButton
 LOGIC_PlayerButton
-        lda #ANIMATION_SHEEP_WALK_LEFT
-		sta VARIABLE1
-		ldx #$00
-		jsr LOGIC_ChangeAnimation
+        inc $d020
 		rts
 
 
@@ -1192,11 +1367,11 @@ LOGIC_UpdateSpriteData
 		ldx VARIABLE1
 		ldy SPRITE_PRIORITY,x
 		
-		lda SPRITE_UNIQUE_COLOR,x
-		sta VIC_SPRITE_COLOR_BASE,y
+		lda SPRITE_UNIQUE_COLOR,y
+		sta VIC_SPRITE_COLOR_BASE,x
 		
-		lda SPRITE_CURRENT_ANIMATION_FRAME,x
-		sta SPRITE_POINTER_BASE,y
+		lda SPRITE_CURRENT_ANIMATION_FRAME,y
+		sta SPRITE_POINTER_BASE,x
 		
 		txa
 		asl
@@ -1681,7 +1856,7 @@ TEST_LevelSwitch
         and #%00010000                  ;check button
         bne .NoButton                   ;a '0' means the button IS pressed
 
-        ldx #$01                        ;index of second screen
+        ldx #$02                        ;index of second screen
         jsr LEVEL_LoadData
         jsr LEVEL_DrawScreen
 
@@ -1690,39 +1865,63 @@ TEST_LevelSwitch
 		
 ;=========================
 ;TEST_LoadSprite
-;initializes a sprite to test various routines
+;initializes a sprite to test various routines - sprite data:
+;type, colour, action, animation, x grid pos, y grid pos
 ;=========================
 !zone TEST_LoadSprite
 TEST_LoadSprite
+
+        ldy #$00
+
+.LoadSprite
 		inc SPRITE_NPC_NUMBER_ACTIVE
 		ldx SPRITE_NPC_NUMBER_ACTIVE
-		
-		lda #$0a
-		sta VARIABLE1
-		lda #$09
-		sta VARIABLE2					;on screen tile coords
-		
-		jsr LOGIC_PlaceSpriteInTile
-		
-		txa
-		sta SPRITE_PRIORITY,x
-		
-		lda #ACTION_GENERAL_IDLE
-		sta SPRITE_CURRENT_ACTION,x
-		sta SPRITE_NEXT_ACTION,x
-		
-		lda #WHITE
-		sta SPRITE_UNIQUE_COLOR,x
-		
-		lda #ANIMATION_SHEEP_EAT_RIGHT
-		sta VARIABLE1
-		
-		jsr LOGIC_ChangeAnimation
-		
-		ldx SPRITE_NPC_NUMBER_ACTIVE
-		inx								;increase to include player
+        
+        cpx $08
+        bne .SpriteSlotFree
+        rts
+        
+.SpriteSlotFree        
+        txa
+        sta SPRITE_PRIORITY,x
+        
+        lda CURRENT_SCREEN_SPRITE_DATA,y
+        sta SPRITE_TYPE,x
+        
+        iny
+        lda CURRENT_SCREEN_SPRITE_DATA,y
+        sta SPRITE_UNIQUE_COLOR,x
+        
+        iny
+        lda CURRENT_SCREEN_SPRITE_DATA,y
+        sta SPRITE_CURRENT_ACTION,x
+        sta SPRITE_NEXT_ACTION,x
+        
+        iny
+        lda CURRENT_SCREEN_SPRITE_DATA,y
+        sta VARIABLE1
+        sty VARIABLE7
+        jsr LOGIC_ChangeAnimation
+        
+        ldy VARIABLE7
+        iny
+        lda CURRENT_SCREEN_SPRITE_DATA,y
+        sta VARIABLE1
+        iny
+        lda CURRENT_SCREEN_SPRITE_DATA,y
+        sta VARIABLE2
+        
+        sty VARIABLE7
+        jsr LOGIC_PlaceSpriteInTile
+        
+        ldy VARIABLE7
+        iny
+        
+        cpx #$03
+        bne .LoadSprite
+        
 		lda #$00
-		
+		inx                             ;add 1 to include player sprite
 .EnableLoop
 		sec
 		rol								;add 'bits' for each sprite
@@ -1732,8 +1931,7 @@ TEST_LoadSprite
 		sta VIC_SPRITE_ENABLE_REGISTER
 		
 		rts
-		
-		
+
 ;=========================================================================
 ;	CURRENT SCREEN DATA
 ;=========================================================================
@@ -1780,18 +1978,17 @@ CURRENT_SCREEN_ATTRIBUTE_DATA
 		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
 		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
 
-CURRENT_SCREEN_BG_1
-		!byte $00
-		
-CURRENT_SCREEN_BG_2
-		!byte $00
-		
-;any extra data that might be needed - such as number and positions of npcs and doors
-CURRENT_SCREEN_GENERAL_DATA
+;type, colour, action, animation, x grid pos, y grid pos
+CURRENT_SCREEN_SPRITE_DATA
+     !byte $01,      WHITE,      $01,     $10,       $12,    $01                      
+     !byte $01,      RED,        $01,     $09,       $07,    $08
+     !byte $01,      BLUE,       $01,     $0a,       $02,    $07
 
 ;=================================================================
 ;   SPRITE PLACEMENT DATA
 ;=================================================================
+
+        * = $3000
 
 SPRITE_NPC_NUMBER_ACTIVE
 		!byte $00												;number of non-player sprites
@@ -1817,12 +2014,12 @@ SPRITE_TILE_X_DELTA                                             ;how far through
 SPRITE_TILE_Y_DELTA
         !byte $00, $00, $00, $00, $00, $00, $00, $00
 		
-		* = $3000
+		* = $3100
 SPRITE_PRIORITY
 		!byte $00, $ff, $ff, $ff, $ff, $ff, $ff, $ff			;lower sprites should show over higher
 		
 SPRITE_UNIQUE_COLOR
-		!byte $00, $00, $00, $00, $00, $00, $00, $00			;lower sprites should show over higher
+		!byte $00, $00, $00, $00, $00, $00, $00, $00			
 		
 ;=================================================================
 ;   SPRITE ACTION DATA
@@ -1831,14 +2028,14 @@ SPRITE_UNIQUE_COLOR
 SPRITE_TYPE
 		!byte $00, $00, $00, $00, $00, $00, $00, $00			;for AI routines
 
-SPRITE_CURRENT_ACTION											;what the sprite is currently up to
-		!byte $00, $00, $00, $00, $00, $00, $00, $00
+SPRITE_CURRENT_ACTION											
+		!byte $00, $00, $00, $00, $00, $00, $00, $00            ;what the sprite is currently up to
 		
 SPRITE_CURRENT_DIRECTION
 		!byte $00, $00, $00, $00, $00, $00, $00, $00
 		
-SPRITE_NEXT_ACTION												;next action for sprite
-		!byte $00, $00, $00, $00, $00, $00, $00, $00
+SPRITE_NEXT_ACTION												
+		!byte $00, $00, $00, $00, $00, $00, $00, $00            ;next action for sprite
 		
 SPRITE_DECISION_TIMER
 		!byte $00, $00, $00, $00, $00, $00, $00, $00			;time between npc actions
@@ -1897,17 +2094,24 @@ SCREEN_ROW_HIGH_BYTE
 PLAYER_JOYSTICK_STATUS
         !byte $00
 
+PLAYER_WORLD_COORD
+        !byte $00, $00
+
+PLAYER_CURRENT_SCREEN
+        !byte $00
+
 ;=========================================================================
 ;   GAME FLAGS
 ;=========================================================================
+
+
 
 ;=========================================================================
 ;   GENERAL DATA
 ;=========================================================================
 
 BIT_MASK
-        !byte $01, $02, $04, $08, $10, $20, $40, $80
-	
+        !byte $01, $02, $04, $08, $10, $20, $40, $80	
 
 ;==================================================================
 ;	ANIMATION DATA
@@ -1976,7 +2180,7 @@ ANIM_PLAYER_WALK_RIGHT
 		
 ANIM_PLAYER_TALK
 		!byte $06
-		!byte $4d, $4e, $00
+		!byte $4e, $4f, $00
 		
 ANIM_PLAYER_DANCE
 		!byte $0a							;Timer
@@ -2011,32 +2215,134 @@ ANIM_SHEEP_EAT_RIGHT
 		!byte $08
 		!byte $68, $69, $6a, $6b, $6a, $69, $00
 		
-;======================
+;====================================================
 ;	LEVEL DATA
-;======================
+;====================================================
+
+DATA_OVERWORLD_MAP
+        !byte $00, $01, $02, $03
+        !byte $04, $05, $06, $07
+        !byte $08, $09, $0a, $0b
+        !byte $0c, $0d, $0e, $0f
 
 DATA_LEVEL_POINTERS
-		!word 0
+        !word DATA_LEVEL_0_POINTER
         !word DATA_LEVEL_1_POINTER
         !word DATA_LEVEL_2_POINTER
+        !word DATA_LEVEL_3_POINTER
+        !word DATA_LEVEL_4_POINTER
+        !word DATA_LEVEL_5_POINTER
+        !word DATA_LEVEL_6_POINTER
+        !word DATA_LEVEL_7_POINTER
+        !word DATA_LEVEL_8_POINTER
+        !word DATA_LEVEL_9_POINTER
+        !word DATA_LEVEL_10_POINTER
+        !word DATA_LEVEL_11_POINTER
+        !word DATA_LEVEL_12_POINTER
+        !word DATA_LEVEL_13_POINTER
+        !word DATA_LEVEL_14_POINTER
+        !word DATA_LEVEL_15_POINTER
         !word 0
 
+DATA_LEVEL_0_POINTER
+        !word DATA_LEVEL_0
+        !word DATA_LEVEL_0 + 220
+        !word DATA_LEVEL_0 + 440
 DATA_LEVEL_1_POINTER
         !word DATA_LEVEL_1
         !word DATA_LEVEL_1 + 220
         !word DATA_LEVEL_1 + 440
-
 DATA_LEVEL_2_POINTER
         !word DATA_LEVEL_2
         !word DATA_LEVEL_2 + 220
         !word DATA_LEVEL_2 + 440
+DATA_LEVEL_3_POINTER
+        !word DATA_LEVEL_3
+        !word DATA_LEVEL_3 + 220
+        !word DATA_LEVEL_3 + 440
+DATA_LEVEL_4_POINTER
+        !word DATA_LEVEL_4
+        !word DATA_LEVEL_4 + 220
+        !word DATA_LEVEL_4 + 440
+DATA_LEVEL_5_POINTER
+        !word DATA_LEVEL_5
+        !word DATA_LEVEL_5 + 220
+        !word DATA_LEVEL_5 + 440
+DATA_LEVEL_6_POINTER
+        !word DATA_LEVEL_6
+        !word DATA_LEVEL_6 + 220
+        !word DATA_LEVEL_6 + 440
+DATA_LEVEL_7_POINTER
+        !word DATA_LEVEL_7
+        !word DATA_LEVEL_7 + 220
+        !word DATA_LEVEL_7 + 440
+DATA_LEVEL_8_POINTER
+        !word DATA_LEVEL_8
+        !word DATA_LEVEL_8 + 220
+        !word DATA_LEVEL_8 + 440
+DATA_LEVEL_9_POINTER
+        !word DATA_LEVEL_9
+        !word DATA_LEVEL_9 + 220
+        !word DATA_LEVEL_9 + 440
+DATA_LEVEL_10_POINTER
+        !word DATA_LEVEL_10
+        !word DATA_LEVEL_10 + 220
+        !word DATA_LEVEL_10 + 440
+DATA_LEVEL_11_POINTER
+        !word DATA_LEVEL_11
+        !word DATA_LEVEL_11 + 220
+        !word DATA_LEVEL_11 + 440
+DATA_LEVEL_12_POINTER
+        !word DATA_LEVEL_12
+        !word DATA_LEVEL_12 + 220
+        !word DATA_LEVEL_12 + 440
+DATA_LEVEL_13_POINTER
+        !word DATA_LEVEL_13
+        !word DATA_LEVEL_13 + 220
+        !word DATA_LEVEL_13 + 440
+DATA_LEVEL_14_POINTER
+        !word DATA_LEVEL_14
+        !word DATA_LEVEL_14 + 220
+        !word DATA_LEVEL_14 + 440
+DATA_LEVEL_15_POINTER
+        !word DATA_LEVEL_15
+        !word DATA_LEVEL_15 + 220
+        !word DATA_LEVEL_15 + 440
 
+
+DATA_LEVEL_0
+        !binary "testlvls/levela.lvl"
 DATA_LEVEL_1
-        !binary "levels/level1.lvl"
-
+        !binary "testlvls/levelb.lvl"
 DATA_LEVEL_2
-        !binary "levels/level2.lvl"
-		
+        !binary "testlvls/levelc.lvl"
+DATA_LEVEL_3
+        !binary "testlvls/leveld.lvl"
+DATA_LEVEL_4
+        !binary "testlvls/levele.lvl"
+DATA_LEVEL_5
+        !binary "testlvls/levelf.lvl"
+DATA_LEVEL_6
+        !binary "testlvls/levelg.lvl"
+DATA_LEVEL_7
+        !binary "testlvls/levelh.lvl"
+DATA_LEVEL_8
+        !binary "testlvls/leveli.lvl"
+DATA_LEVEL_9
+        !binary "testlvls/levelj.lvl"
+DATA_LEVEL_10
+        !binary "testlvls/levelk.lvl"
+DATA_LEVEL_11
+        !binary "testlvls/levell.lvl"
+DATA_LEVEL_12
+        !binary "testlvls/levelm.lvl"
+DATA_LEVEL_13
+        !binary "testlvls/leveln.lvl"
+DATA_LEVEL_14
+        !binary "testlvls/levelo.lvl"
+DATA_LEVEL_15
+        !binary "testlvls/levelp.lvl"
+
 ;=========================================================================
 ;	EXTERNAL DATA
 ;=========================================================================
