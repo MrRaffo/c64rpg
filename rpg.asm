@@ -1,7 +1,9 @@
 !to "rpg.prg",cbm
 
 ;ver 1: loads charset and sprite data, initializes VIC, tests first sprite definitions
-;ver 2: added simple joystick controls for player sprite and tests charset
+;ver 2: added simple joystick controls for player sprite
+;ver 3: added ability to draw a tile to any coord on screen, with colour data
+;		added level drawing routine and test screen data
 
 ;=============================================================
 ;CONSTANTS
@@ -109,9 +111,12 @@ SPRITE_HALF_SIZE                = 8
         lda #$00
         sta VIC_SPRITE_ENABLE_REGISTER      ;disable sprites
 
-        sta VIC_BORDER_COLOR                ;black
-        sta VIC_BACKGROUND_COLOR
 
+        sta VIC_BACKGROUND_COLOR			;black
+        lda #GREEN
+		sta VIC_BORDER_COLOR                
+		
+		
         ;set VIC bank
         lda CIA_PRA
         and #%11111100                      ;select VIC bank #3 - $c000 - $ffff
@@ -190,7 +195,7 @@ SPRITE_HALF_SIZE                = 8
         lda #YELLOW
         sta VIC_SPRITE_COLOR_2
 
-        lda #RED
+        lda #GREEN
         sta VIC_SPRITE_COLOR_BASE
 
 ;==================================
@@ -204,21 +209,37 @@ SPRITE_HALF_SIZE                = 8
         lda #BROWN
         sta VIC_BGCOLOR_1
 
-        lda #ORANGE
+        lda #MIDDLE_GREY
         sta VIC_BGCOLOR_2
 
-        lda #$0a
-        tay
-
-        ldx #$00
-
-TestChar
-        txa
-        sta SCREEN_CHAR_BUFFER,x
-        tya
-        sta VIC_COLOR_RAM,x
-        inx
-        bne TestChar
+		ldx #<SCREEN_1_DATA
+		stx ZEROPAGE_POINTER_1
+		ldx #>SCREEN_1_DATA
+		stx ZEROPAGE_POINTER_1 + 1
+		
+		jsr CopyScreenData
+        jsr DrawScreen
+		
+TEST_Charset
+		ldx #$00
+		ldy #$e0
+		
+TestLoop
+		tya
+		sta SCREEN_CHAR_BUFFER + 880,x
+		iny
+		inx
+		cpx #$20
+		bne TestLoop
+		
+TestColor
+		ldx #$00
+		lda #WHITE
+TestColorLoop
+		sta $d800 + 880,x
+		inx
+		cpx #$20
+		bne TestColorLoop
         
 
 ;==================================================================
@@ -226,7 +247,7 @@ TestChar
 ;==================================================================
 !zone GameLoop
 GameLoop
-        inc VIC_BORDER_COLOR           ;flash the border
+        ;inc VIC_BORDER_COLOR           ;flash the border
 
         jsr ReadJoystick
 
@@ -422,6 +443,7 @@ PlayerMoveUp
 
 !zone PlayerMoveDown
 PlayerMoveDown
+
         ldx #$00
         jsr MoveSpriteDown
         rts
@@ -441,6 +463,7 @@ PlayerMoveRight
 !zone PlayerButton
 PlayerButton
         ldx #$00
+		jsr TestDrawScreen
         jsr PlayerAction
         rts
 
@@ -500,7 +523,122 @@ UpdateSpritePositions
 ;==================================================================
 ;       LEVEL FUNCTIONS
 ;==================================================================
+
+;==========================
+;CopyScreenData
+;copies screen data to CURRENT_SCREEN
+;expects ZP1 to point to level data
+;==========================
+
+!zone CopyScreenData
+CopyScreenData
+		ldx #<CURRENT_SCREEN
+		stx ZEROPAGE_POINTER_2
+		ldx #>CURRENT_SCREEN
+		stx ZEROPAGE_POINTER_2 + 1
+		
+		ldy #$00
+.CopyLoop		
+		lda (ZEROPAGE_POINTER_1),y
+		sta (ZEROPAGE_POINTER_2),y
+		iny
+		cpy #$dc			;220 decimal, check if finished
+		bne .CopyLoop
+		
+		rts
+
+;==========================
+;DrawScreen
+;writes data from CURRENT_SCREEN
+;to the char memory
+;==========================
+!zone DrawScreen
+DrawScreen
+		ldx #$00
+		stx VARIABLE2
+		stx VARIABLE5		;counter for overall tiles drawn
+		ldy #$00			;set tile coords to 0,0 (in prep for DrawTile call), X will double as a counter
+		sty VARIABLE1
+		
+.DrawScreenLoop
+		lda CURRENT_SCREEN,x
+		sta VARIABLE3
+
+		jsr DrawTile
+		
+		ldy VARIABLE1
+		iny
+		cpy #$14			;20 in decimal (check if we've finished drawing a row)
+		bne .NoRowIncrement
+		
+		inc VARIABLE2		;draw next row
+		ldy #$00
+				
+.NoRowIncrement
+		sty VARIABLE1
+		inc VARIABLE5
+		ldx VARIABLE5
+		cpx #$dc			;220 in decimal, check if the level is finished
+		bne .DrawScreenLoop
+		
+		rts
+		
+;==========================
+;DrawTile
+;expects tile screen x-coord in VARIABLE1, y coord in VARIABLE2
+;and the tile type in VARIABLE3
+;==========================
+
 !zone DrawTile
+DrawTile
+        ldy VARIABLE2                   ;row index
+        lda SCREEN_ROW_LOW_BYTE,y
+        sta ZEROPAGE_POINTER_1
+        sta ZEROPAGE_POINTER_2
+        lda SCREEN_ROW_HIGH_BYTE,y
+        sta ZEROPAGE_POINTER_1 + 1      ;ZP1 now points to the upper left hand corner of the first tile in the given row
+
+        clc
+        adc #( ( VIC_COLOR_RAM - SCREEN_CHAR_BUFFER ) & 0xff00 ) >> 8
+        sta ZEROPAGE_POINTER_2 + 1
+
+        lda VARIABLE1
+        asl                             ;VARIABLE1 contains the tile X-Coord, but the tiles are 2x2, so double this to get the actual screen position
+        tay
+
+        lda VARIABLE3
+        asl
+        asl                             ;tiles are stored in blocks of 4
+        
+        tax
+
+        sta (ZEROPAGE_POINTER_1),y
+        lda CHARSET_COLOR_DATA,x
+        sta (ZEROPAGE_POINTER_2),y
+        inx
+        iny
+        txa
+        sta (ZEROPAGE_POINTER_1),y
+        lda CHARSET_COLOR_DATA,x
+        sta (ZEROPAGE_POINTER_2),y
+        tya
+        clc
+        adc #$27                        ;39 in decimal, skip a line
+        tay
+        inx
+        txa
+        sta (ZEROPAGE_POINTER_1),y
+        lda CHARSET_COLOR_DATA,x
+        sta (ZEROPAGE_POINTER_2),y
+        inx
+        iny
+        txa
+        sta (ZEROPAGE_POINTER_1),y
+        lda CHARSET_COLOR_DATA,x
+        sta (ZEROPAGE_POINTER_2),y
+
+        rts
+
 
 ;==================================================================
 ;       MATHS FUNCTIONS
@@ -545,10 +683,46 @@ Multiply
 ;       TEST FUNCTIONS
 ;==================================================================
 
+TestDrawScreen
+		ldx #<SCREEN_2_DATA
+		stx ZEROPAGE_POINTER_1
+		ldx #>SCREEN_2_DATA
+		stx ZEROPAGE_POINTER_1 + 1
+		
+		jsr CopyScreenData
+		jsr DrawScreen
+		
+		rts
 
 ;==================================================================
 ;       DATA
 ;==================================================================
+
+SCREEN_ROW_LOW_BYTE
+        !byte ( ( SCREEN_CHAR_BUFFER +   0 ) & 0x00ff )
+        !byte ( ( SCREEN_CHAR_BUFFER +  80 ) & 0x00ff )
+        !byte ( ( SCREEN_CHAR_BUFFER + 160 ) & 0x00ff )
+        !byte ( ( SCREEN_CHAR_BUFFER + 240 ) & 0x00ff )
+        !byte ( ( SCREEN_CHAR_BUFFER + 320 ) & 0x00ff )
+        !byte ( ( SCREEN_CHAR_BUFFER + 400 ) & 0x00ff )
+        !byte ( ( SCREEN_CHAR_BUFFER + 480 ) & 0x00ff )
+        !byte ( ( SCREEN_CHAR_BUFFER + 560 ) & 0x00ff )
+        !byte ( ( SCREEN_CHAR_BUFFER + 640 ) & 0x00ff )
+        !byte ( ( SCREEN_CHAR_BUFFER + 720 ) & 0x00ff )
+        !byte ( ( SCREEN_CHAR_BUFFER + 800 ) & 0x00ff )
+
+SCREEN_ROW_HIGH_BYTE
+        !byte ( ( SCREEN_CHAR_BUFFER +   0 ) & 0xff00 ) >> 8
+        !byte ( ( SCREEN_CHAR_BUFFER +  80 ) & 0xff00 ) >> 8
+        !byte ( ( SCREEN_CHAR_BUFFER + 160 ) & 0xff00 ) >> 8
+        !byte ( ( SCREEN_CHAR_BUFFER + 240 ) & 0xff00 ) >> 8
+        !byte ( ( SCREEN_CHAR_BUFFER + 320 ) & 0xff00 ) >> 8
+        !byte ( ( SCREEN_CHAR_BUFFER + 400 ) & 0xff00 ) >> 8
+        !byte ( ( SCREEN_CHAR_BUFFER + 480 ) & 0xff00 ) >> 8
+        !byte ( ( SCREEN_CHAR_BUFFER + 560 ) & 0xff00 ) >> 8
+        !byte ( ( SCREEN_CHAR_BUFFER + 640 ) & 0xff00 ) >> 8
+        !byte ( ( SCREEN_CHAR_BUFFER + 720 ) & 0xff00 ) >> 8
+        !byte ( ( SCREEN_CHAR_BUFFER + 800 ) & 0xff00 ) >> 8
 
 SPRITE_X_POS
         !byte $00, $00, $00, $00, $00, $00, $00, $00
@@ -556,8 +730,47 @@ SPRITE_X_POS
 SPRITE_Y_POS
         !byte $00, $00, $00, $00, $00, $00, $00, $00
 
+CHARSET_COLOR_DATA
+        !byte $00, $00, $00, $00, $05, $05, $05, $05, $0a, $0a, $0a, $0a, $0b, $0b, $0b, $0b
+		!byte $0e, $0e, $0e, $0e, $07, $07, $07, $07, $07, $07, $07, $07, $09, $09, $09, $09
+		!byte $0f, $0f, $0f, $0f, $0d, $0d, $0d, $0d, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
+		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
+		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
+		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
+		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
+		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
+		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
+		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
+		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
+		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
+		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
+		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a
+		!byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
+		!byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
+
+		
+
 CHARSET_DATA
         !binary "graphics/rpgset1.chr"
 
 SPRITE_DATA
-        !binary "graphics/sprites.spr"
+        !binary "graphics/spriteset.spr"
+
+CURRENT_SCREEN
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $07, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $05, $05, $05, $05, $05, $00, $00, $01, $01, $00, $07, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $06, $06, $06, $06, $06, $00, $00, $00, $00, $00, $07, $00, $00, $00, $0a, $0a, $0a, $0a, $0a
+		!byte $00, $02, $03, $02, $03, $02, $00, $00, $00, $09, $00, $07, $00, $00, $0a, $0a, $00, $00, $00, $00
+		!byte $00, $02, $02, $04, $02, $02, $00, $00, $09, $09, $00, $07, $00, $00, $0a, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $09, $09, $00, $07, $00, $00, $0a, $01, $00, $00, $00, $00
+		!byte $07, $07, $07, $07, $07, $07, $07, $08, $07, $07, $07, $07, $00, $00, $0a, $01, $01, $00, $00, $00
+		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $00, $01, $01, $00, $00
+		!byte $00, $00, $00, $01, $00, $01, $00, $00, $01, $01, $00, $00, $00, $00, $0a, $00, $00, $01, $00, $00
+		!byte $00, $00, $00, $01, $01, $00, $00, $00, $00, $01, $00, $00, $00, $00, $0a, $00, $00, $01, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $0a, $00, $01, $00, $00, $00
+		
+SCREEN_1_DATA
+		!binary "levels/screen1.scn"
+		
+SCREEN_2_DATA
+		!binary "levels/screen2.scn"
