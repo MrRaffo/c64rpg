@@ -4,9 +4,8 @@
 ;ver 2: added simple joystick controls for player sprite
 ;ver 3: added ability to draw a tile to any coord on screen, with colour data
 ;		added level drawing routine and test screen data
-;ver 4: added animations and basic keyboard reading - pressing 1 or 2 will choose a different animation for player sprite
-
-		;TODO - add a routine to deal with changes in the players current action
+;ver 4: added animations and basic keyboard reading - pressing 1 to 4 will choose a different animation for player sprite
+;ver 5: (b) added better animations and changed movement to 1 pixel per frame and one of four directions at a time
 
 ;=============================================================
 ;CONSTANTS
@@ -101,21 +100,36 @@ TILE_HALF_SIDE                  = 8
 SPRITE_SIZE                     = 16
 SPRITE_HALF_SIZE                = 8
 
-;PLAYER ACTIONS
-PLAYER_ACTION_STANDING			= $1
-PLAYER_ACTION_WALKING			= $2
-PLAYER_ACTION_TALKING			= $3
-PLAYER_ACTION_DANCING			= $4
+;DIRECTION
+DIRECTION_UP					= 1
+DIRECTION_DOWN					= 2
+DIRECTION_LEFT					= 3
+DIRECTION_RIGHT					= 4
+
+;ACTION INDICES
+ACTION_PLAYER_STAND_UP			= 1
+ACTION_PLAYER_STAND_DOWN		= 2
+ACTION_PLAYER_STAND_LEFT		= 3
+ACTION_PLAYER_STAND_RIGHT		= 4
+ACTION_PLAYER_WALK_UP			= 5
+ACTION_PLAYER_WALK_DOWN			= 6
+ACTION_PLAYER_WALK_LEFT			= 7
+ACTION_PLAYER_WALK_RIGHT		= 8
+ACTION_PLAYER_TALK				= 9
+ACTION_PLAYER_DANCE				= 10
+
 
 ;ANIMATION INDICES
 ANIMATION_PLAYER_STAND_UP		= 1
-ANIMATION_PLAYER_STAND_LEFT		= 2
-ANIMATION_PLAYER_STAND_RIGHT	= 3
-ANIMATION_PLAYER_WALK_UP		= 4
-ANIMATION_PLAYER_WALK_LEFT		= 5
-ANIMATION_PLAYER_WALK_RIGHT		= 6
-ANIMATION_PLAYER_TALK			= 7
-ANIMATION_PLAYER_DANCE			= 8
+ANIMATION_PLAYER_STAND_DOWN		= 2
+ANIMATION_PLAYER_STAND_LEFT		= 3
+ANIMATION_PLAYER_STAND_RIGHT 	= 4
+ANIMATION_PLAYER_WALK_UP		= 5
+ANIMATION_PLAYER_WALK_DOWN		= 6
+ANIMATION_PLAYER_WALK_LEFT		= 7
+ANIMATION_PLAYER_WALK_RIGHT		= 8
+ANIMATION_PLAYER_TALK			= 9
+ANIMATION_PLAYER_DANCE			= 10
 
 ;=============================================================
 ;   INITIALIZATION
@@ -198,7 +212,7 @@ ANIMATION_PLAYER_DANCE			= 8
 ;=================================
 
 
-        lda #$40                    ;64 decimal
+        lda #$78                    
         sta SPRITE_X_POS
         sta SPRITE_Y_POS            
 
@@ -230,11 +244,6 @@ ANIMATION_PLAYER_DANCE			= 8
 
         lda #MIDDLE_GREY
         sta VIC_BGCOLOR_2
-		
-		lda #ANIMATION_PLAYER_STAND_RIGHT
-		sta VARIABLE1
-		ldx #$00
-		jsr ChangeAnimation
 
 		ldx #<SCREEN_1_DATA
 		stx ZEROPAGE_POINTER_1
@@ -276,12 +285,18 @@ GameLoop
         jsr ReadJoystick
 		
 		jsr ReadKeyboard
-
-        jsr UpdateSpritePositions      ;moves sprite software stored positions to hardware position registers, deals with extended X bit
+		
+		lda #$7f
+		sta $dc00						;finish reading the keyboard
+										;this is why holding the button moves the character in versions 4 and 5
+	
+        jsr UpdateSpritePositions      	;moves sprite software stored positions to hardware position registers, deals with extended X bit
 
 		jsr UpdateAnimations
 		
 		jsr CopySpriteFrameData
+		
+		jsr UpdateActions
 		
         jsr WaitFrame
 
@@ -429,13 +444,31 @@ ReadKeyboard
 		cmp #%11111110		;check for '1' key pressed
 		bne .OneKeyNotPressed
 		
-		jsr OneKeyPressed
+		jmp OneKeyPressed
 
 .OneKeyNotPressed		
 		cmp #%11110111		;check for '2' key pressed
-		bne .NoKeyPressed
+		bne .TwoKeyNotPressed
 		
-		jsr TwoKeyPressed
+		jmp TwoKeyPressed
+
+.TwoKeyNotPressed
+		lda #%11111101
+		sta $dc00
+		lda $dc01
+		
+		cmp #%11111110
+		bne .ThreeKeyNotPressed
+		
+		jmp ThreeKeyPressed
+		
+.ThreeKeyNotPressed
+		cmp #%11110111
+		bne .FourKeyNotPressed
+		
+		jmp FourKeyPressed
+		
+.FourKeyNotPressed
 		
 .NoKeyPressed
 		rts
@@ -451,29 +484,73 @@ ReadKeyboard
 
 !zone ReadJoystick
 ReadJoystick
+
+		lda JOYSTICK_2
+		eor #$0f
+		and #$0f				;check that a direction is being pressed
+		bne .CheckDirections
+								
+								;if no direction, set player standing action							
+		lda CHARACTER_CURRENT_DIRECTION
+		cmp #DIRECTION_UP
+		bne .NotUp
+		
+		lda #ACTION_PLAYER_STAND_UP
+		sta CHARACTER_NEXT_ACTION
+		jmp .RightNotPressed
+		
+.NotUp
+		cmp #DIRECTION_DOWN
+		bne .NotDown
+		
+		lda #ACTION_PLAYER_STAND_DOWN
+		sta CHARACTER_NEXT_ACTION
+		jmp .RightNotPressed
+
+.NotDown
+		cmp #DIRECTION_LEFT
+		bne .NotLeft
+		
+		lda #ACTION_PLAYER_STAND_LEFT
+		sta CHARACTER_NEXT_ACTION
+		jmp .RightNotPressed
+		
+.NotLeft
+		cmp #DIRECTION_RIGHT
+		bne .NotUp
+		
+		lda #ACTION_PLAYER_STAND_RIGHT
+		sta CHARACTER_NEXT_ACTION
+		jmp .RightNotPressed
+		
+.CheckDirections
         lda #$01
         bit JOYSTICK_2
         bne .UpNotPressed
         jsr PlayerMoveUp
+		rts
 
 .UpNotPressed
         lda #$02
         bit JOYSTICK_2
         bne .DownNotPressed
         jsr PlayerMoveDown
+		rts
 
 .DownNotPressed
         lda #$04
         bit JOYSTICK_2
         bne .LeftNotPressed
         jsr PlayerMoveLeft
-
+		rts
+		
 .LeftNotPressed
         lda #$08
         bit JOYSTICK_2
         bne .RightNotPressed
         jsr PlayerMoveRight
-
+		rts
+		
 .RightNotPressed
         lda #$10
         bit JOYSTICK_2
@@ -492,19 +569,12 @@ ReadJoystick
 !zone PlayerMoveUp
 PlayerMoveUp
 
-		lda JOYSTICK_STATUS
-		bit BIT_MASK
-		bne .NoChangeInDirection			;check if this is a new direction
+		ldx #DIRECTION_UP
+		stx CHARACTER_CURRENT_DIRECTION
 
-		ldx #PLAYER_ACTION_WALKING			;if not, change the character status
-		jsr ChangePlayerAction
-		
-		lda PLAYER_DIRECTION_FACING
-		ora BIT_MASK + 0				;UP
-		and BIT_MASK_INVERSE + 1		;remove 'DOWN' bit
-		sta PLAYER_DIRECTION_FACING
+		ldx #ANIMATION_PLAYER_WALK_UP
+		stx CHARACTER_NEXT_ACTION
 
-.NoChangeInDirection		
         ldx #$00
         jsr MoveSpriteUp
         rts
@@ -512,31 +582,24 @@ PlayerMoveUp
 !zone PlayerMoveDown
 PlayerMoveDown
 
-		lda JOYSTICK_STATUS
-		bit BIT_MASK + 1
-		bne .NoChangeInDirection
+		ldx #DIRECTION_DOWN
+		stx CHARACTER_CURRENT_DIRECTION
 
-		ldx #PLAYER_ACTION_WALKING
-		jsr ChangePlayerAction
+		ldx #ANIMATION_PLAYER_WALK_DOWN
+		stx CHARACTER_NEXT_ACTION
 		
-		lda PLAYER_DIRECTION_FACING
-		ora BIT_MASK + 1				;DOWN
-		and BIT_MASK_INVERSE + 0		;remove 'UP' bit
-		sta PLAYER_DIRECTION_FACING
-		
-.NoChangeInDirection
 		ldx #$00
         jsr MoveSpriteDown
         rts
 
 !zone PlayerMoveLeft
 PlayerMoveLeft
-		ldx #PLAYER_ACTION_WALKING
-		stx PLAYER_CURRENT_ACTION
-		
-		lda PLAYER_DIRECTION_FACING
-		ora BIT_MASK + 2		;LEFT
-		sta PLAYER_DIRECTION_FACING
+
+		ldx #DIRECTION_LEFT
+		stx CHARACTER_CURRENT_DIRECTION
+
+		ldx #ANIMATION_PLAYER_WALK_LEFT
+		stx CHARACTER_NEXT_ACTION
 
         ldx #$00
         jsr MoveSpriteLeft
@@ -544,12 +607,12 @@ PlayerMoveLeft
 
 !zone PlayerMoveRight
 PlayerMoveRight
-		ldx #PLAYER_ACTION_WALKING
-		stx PLAYER_CURRENT_ACTION
-		
-		lda PLAYER_DIRECTION_FACING
-		ora BIT_MASK + 3		;RIGHT
-		sta PLAYER_DIRECTION_FACING
+
+		ldx #DIRECTION_RIGHT
+		stx CHARACTER_CURRENT_DIRECTION
+
+		ldx #ANIMATION_PLAYER_WALK_RIGHT
+		stx CHARACTER_NEXT_ACTION
 
         ldx #$00
         jsr MoveSpriteRight
@@ -557,8 +620,9 @@ PlayerMoveRight
 
 !zone PlayerButton
 PlayerButton
-        ldx #$00
+
 		jsr TestDrawScreen
+		ldx #$00
         jsr PlayerAction
         rts
 
@@ -578,10 +642,24 @@ MoveSpriteDown
 
 MoveSpriteLeft
         dec SPRITE_X_POS,x
+		bpl .UpdateDone
+		
+		lda BIT_MASK,x
+		eor #$ff
+		and VIC_SPRITE_X_EXTEND
+		sta VIC_SPRITE_X_EXTEND
+		
         rts
 
 MoveSpriteRight
         inc SPRITE_X_POS,x
+		bne .UpdateDone
+		
+		lda BIT_MASK,x
+		ora VIC_SPRITE_X_EXTEND
+		sta VIC_SPRITE_X_EXTEND		
+		
+.UpdateDone
         rts
 
 PlayerAction
@@ -606,9 +684,9 @@ UpdateSpritePositions
         sta VIC_SPRITE_Y_COORD,y        ;Y coord does not need to be modified
 
         lda SPRITE_X_POS,x
-        asl                 ;effectively doubles position, high bit now in carry
+        ;asl                 ;effectively doubles position, high bit now in carry
         sta VIC_SPRITE_X_COORD,y            
-        ror VIC_SPRITE_X_EXTEND
+        ;ror VIC_SPRITE_X_EXTEND
         inx
         cpx #$08
         bne .UpdateLoop
@@ -621,14 +699,34 @@ UpdateSpritePositions
 	
 !zone OneKeyPressed
 OneKeyPressed
-		lda #ANIMATION_PLAYER_TALK
-		sta SPRITE_ANIMATION_CYCLE
+		lda #ANIMATION_PLAYER_DANCE
+		sta VARIABLE1
+		ldx #$00
+		jsr ChangeAnimation
 		rts
 
 !zone TwoKeyPressed
 TwoKeyPressed
-		lda #ANIMATION_PLAYER_DANCE
-		sta SPRITE_ANIMATION_CYCLE
+		lda #ANIMATION_PLAYER_WALK_DOWN
+		sta VARIABLE1
+		ldx #$00
+		jsr ChangeAnimation
+		rts
+		
+!zone ThreeKeyPressed
+ThreeKeyPressed
+		lda #ANIMATION_PLAYER_WALK_LEFT
+		sta VARIABLE1
+		ldx #$00
+		jsr ChangeAnimation
+		rts
+		
+!zone FourKeyPressed
+FourKeyPressed
+		lda #ANIMATION_PLAYER_WALK_RIGHT
+		sta VARIABLE1
+		ldx #$00
+		jsr ChangeAnimation
 		rts
 	
 ;==================================================================
@@ -689,7 +787,7 @@ DrawScreen
 		sty VARIABLE1
 		inc VARIABLE5
 		ldx VARIABLE5
-		cpx #$dc			;220 in decimal, check if the level is finished
+		cpx #$db			;220 in decimal, check if the level is finished
 		bne .DrawScreenLoop
 		
 		rts
@@ -763,6 +861,15 @@ DrawTile
 !zone UpdateAnimations
 UpdateAnimations
 		ldx #$00			;sprite index
+		
+.CheckForChange
+		lda CHARACTER_NEXT_ACTION,x
+		cmp CHARACTER_CURRENT_ACTION,x
+		beq .UpdateLoop
+		
+		sta VARIABLE1
+		jsr ChangeAnimation
+		
 .UpdateLoop
 		jsr UpdateCurrentFrame
 		inx
@@ -864,15 +971,22 @@ CopySpriteFrameData
 ;==================================================================
 
 ;=======================
-;ChangePlayerAction
-;new action in x
+;UpdatePlayerAction
 ;=======================
-!zone ChangePlayerAction
-		stx PLAYER_CURRENT_ACTION
-		ldx #$01
-		stx PLAYER_CHANGE_ACTION_FLAG
+
+!zone UpdateActions
+UpdateActions
+
+		ldx #$00
+
+.UpdateLoop
+		lda CHARACTER_NEXT_ACTION,x
+		sta CHARACTER_CURRENT_ACTION,x
+		inx
+		cpx #$08
+		bne .UpdateLoop
 		rts
-		
+
 		
 ;==================================================================
 ;       MATHS FUNCTIONS
@@ -934,30 +1048,18 @@ TestDrawScreen
 
 BIT_MASK
 		!byte $01, $02, $04, $08, $10, $20, $40, $80
-		
-BIT_MASK_INVERSE
-		!byte $fe, $fd, $fb, $f7, $ef, $df, $bf, $7f
-		
-;==================================================================
-;       FLAGS
-;==================================================================
 
 JOYSTICK_STATUS
 		!byte $ff
-		
-PLAYER_CURRENT_ACTION
-		!byte PLAYER_ACTION_STANDING		;default
-		
-PLAYER_PREVIOUS_ACTION
-		!byte PLAYER_ACTION_STANDING		;to check if the animation needs changed
-		
-PLAYER_CHANGE_ACTION_FLAG					;set if game needs to deal with a change by the player
-		!byte $00
 
-* = $2000		
-PLAYER_DIRECTION_FACING
-		!byte $00				;same as JS - $01 = up, $02 = down, $04 = left, $08 = right
-								;right by default
+CHARACTER_CURRENT_DIRECTION
+		!byte $02, $00, $00, $00, $00, $00, $00, $00
+		
+CHARACTER_CURRENT_ACTION
+		!byte $00, $00, $00, $00, $00, $00, $00, $00
+		
+CHARACTER_NEXT_ACTION
+		!byte $00, $00, $00, $00, $00, $00, $00, $00
 
 ;==========================
 ;	SCREEN DATA
@@ -999,13 +1101,13 @@ SPRITE_CURRENT_FRAME									;actual pointer to sprite definition
 		!byte $00, $00, $00, $00, $00, $00, $00, $00
 		
 SPRITE_FRAME_INDEX										;how far into an animation cycle a sprite is
-		!byte $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $01, $00, $00, $00, $00, $00, $00, $00
 		
 SPRITE_ANIMATION_TIMERS
-		!byte $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $08, $00, $00, $00, $00, $00, $00, $00
 		
 SPRITE_ANIMATION_CYCLE
-		!byte $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $01, $00, $00, $00, $00, $00, $00, $00
 
 CHARSET_COLOR_DATA
         !byte $00, $00, $00, $00, $05, $05, $05, $05, $0a, $0a, $0a, $0a, $0b, $0b, $0b, $0b
@@ -1067,38 +1169,47 @@ SCREEN_2_DATA
 ANIMATION_LIST
 		!word 0x0000						;null pointer
 		!word ANIM_PLAYER_STAND_UP
+		!word ANIM_PLAYER_STAND_DOWN
 		!word ANIM_PLAYER_STAND_LEFT
 		!word ANIM_PLAYER_STAND_RIGHT
 		!word ANIM_PLAYER_WALK_UP
+		!word ANIM_PLAYER_WALK_DOWN
 		!word ANIM_PLAYER_WALK_LEFT
 		!word ANIM_PLAYER_WALK_RIGHT
-
 		!word ANIM_PLAYER_TALK
 		!word ANIM_PLAYER_DANCE
 
 ANIM_PLAYER_STAND_UP
 		!byte $08
-		!byte $4a, $00
+		!byte $4b, $00						;one frame for standing
+
+ANIM_PLAYER_STAND_DOWN
+		!byte $08
+		!byte $40, $00
 		
 ANIM_PLAYER_STAND_LEFT
 		!byte $08
-		!byte $45, $00
+		!byte $49, $00
 		
 ANIM_PLAYER_STAND_RIGHT
 		!byte $08
-		!byte $40, $00						;one frame for standing
+		!byte $46, $00
 		
 ANIM_PLAYER_WALK_UP
 		!byte $06
-		!byte $4a, $4b, $4a, $4c, $00
+		!byte $4c, $4b, $4d, $4b, $00
+		
+ANIM_PLAYER_WALK_DOWN
+		!byte $03
+		!byte $41, $42, $41, $40, $43, $44, $43, $40, $00
 		
 ANIM_PLAYER_WALK_LEFT
-		!byte $04
-		!byte $45, $46, $47, $46, $45, $48, $49, $48, $00
+		!byte $08
+		!byte $48, $49, $4a, $49, $00
 		
 ANIM_PLAYER_WALK_RIGHT
-		!byte $04
-		!byte $40, $41, $42, $41, $40, $43, $44, $43, $00
+		!byte $08
+		!byte $45, $46, $47, $46, $00
 		
 ANIM_PLAYER_TALK
 		!byte $06
@@ -1106,5 +1217,5 @@ ANIM_PLAYER_TALK
 		
 ANIM_PLAYER_DANCE
 		!byte $0a							;Timer
-		!byte $4f, $50, $51, $50, $00 		;Frame List
+		!byte $50, $51, $52, $51, $00 		;Frame List
 	
