@@ -18,6 +18,11 @@
 ;ver 8: added changing sprite priorities and extended x coords
 
 ;ver 9: tested adding multiple sprites
+;       added overworld map, allow player to walk around 4x4 screens
+;       did NOT implement level packing and erasing sprites from screen
+
+;ver 10:added sprite loading from level data, and unloading sprites upon leaving a screen
+;       unloading data does not put current sprite data back in level memory
 
 ;================================================
 ;CONSTANTS
@@ -269,9 +274,6 @@ ANIMATION_SHEEP_EAT_RIGHT		= 16
 		lda #MIDDLE_GREY
 		sta VIC_BGCOLOR_2
 
-		ldx #$00							;LEVEL index
-		jsr LEVEL_LoadData
-		jsr LEVEL_DrawScreen
 
         ;==========================
         ;Prepare the sprite
@@ -317,7 +319,12 @@ ANIMATION_SHEEP_EAT_RIGHT		= 16
 		;Load npc sprite for testing
 		;=========================
 		
-		jsr TEST_LoadSprite
+		;jsr TEST_LoadSprite
+
+		ldx #$00							;LEVEL index
+        stx PLAYER_CURRENT_SCREEN
+		jsr LEVEL_LoadScreenData
+		jsr LEVEL_DrawScreen
 	
 		
 ;====================================================================
@@ -347,6 +354,27 @@ GameLoop
 ;====================================================================
 ;	SYSTEM FUNCTIONS
 ;====================================================================
+
+;==========================
+;SYSTEM_DisableScreen
+;black out the screen while drawing to it
+;==========================
+!zone SYSTEM_DisableScreen
+SYSTEM_DisableScreen
+        lda $d011
+        and %11101111
+        sta $d011
+        rts
+        
+;==========================
+;SYSTEM_EnableScreen
+;==========================
+!zone SYSTEM_EnableScreen
+SYSTEM_EnableScreen      
+        lda $d011
+        ora %00010000
+        sta $d011
+        rts
 
 ;==========================
 ;SYSTEM_HandleInput
@@ -506,6 +534,11 @@ ClearScreen
 ;==========================
 !zone LEVEL_PlayerChangeScreen
 LEVEL_PlayerChangeScreen
+
+        
+
+        jsr LEVEL_UnloadData
+
         lda VARIABLE1
         
         cmp #DIRECTION_UP
@@ -527,9 +560,8 @@ LEVEL_PlayerChangeScreen
         stx VARIABLE2
 
         ldx #$00
-
         jsr LOGIC_PlaceSpriteInTile
-
+        
         dec PLAYER_WORLD_COORD + 1      ;decrease y coord
         ldx PLAYER_WORLD_COORD + 1
         stx MULTI1
@@ -541,7 +573,8 @@ LEVEL_PlayerChangeScreen
         clc
         adc PLAYER_WORLD_COORD
 
-        tax
+        sta PLAYER_CURRENT_SCREEN
+        
         jmp .LoadNewScreen
 
 .GetScreenDown
@@ -563,7 +596,8 @@ LEVEL_PlayerChangeScreen
         clc
         adc PLAYER_WORLD_COORD
 
-        tax
+        sta PLAYER_CURRENT_SCREEN
+       
         jmp .LoadNewScreen
 
 .GetScreenLeft
@@ -588,7 +622,8 @@ LEVEL_PlayerChangeScreen
         clc
         adc PLAYER_WORLD_COORD
 
-        tax
+        sta PLAYER_CURRENT_SCREEN
+        
         jmp .LoadNewScreen
 
 .GetScreenRight
@@ -596,9 +631,9 @@ LEVEL_PlayerChangeScreen
         stx VARIABLE2                   ;players new x coord, as they will be entering from the left
         ldx #$00
         stx VARIABLE1
-
+        
         jsr LOGIC_PlaceSpriteInTile
-
+        
         inc PLAYER_WORLD_COORD          ;increase players world x coord
         ldx PLAYER_WORLD_COORD + 1      ;player Y coord
         stx MULTI1
@@ -611,13 +646,137 @@ LEVEL_PlayerChangeScreen
         clc
         adc PLAYER_WORLD_COORD
         
-        tax
+        sta PLAYER_CURRENT_SCREEN
+        
         jmp .LoadNewScreen
 
 .LoadNewScreen
-        jsr LEVEL_LoadData
+        jsr LEVEL_LoadScreenData
         jsr LEVEL_DrawScreen
 
+        rts
+
+;==========================
+;LEVEL_UnloadData
+;store current level config back into memory
+;==========================
+!zone LEVEL_UnloadData
+LEVEL_UnloadData
+
+        ;jsr SYSTEM_DisableScreen
+
+        jsr LEVEL_UnloadSprites
+
+        lda PLAYER_CURRENT_SCREEN
+        asl
+        tax
+        
+        lda DATA_LEVEL_POINTERS,x
+        sta ZEROPAGE_POINTER_7
+        lda DATA_LEVEL_POINTERS + 1,x
+        sta ZEROPAGE_POINTER_7 + 1
+        
+        lda #<CURRENT_SCREEN_TILE_DATA                  ;get pointers to screen buffers
+        sta ZEROPAGE_POINTER_1
+        lda #>CURRENT_SCREEN_TILE_DATA
+        sta ZEROPAGE_POINTER_1 + 1
+        
+        lda #<CURRENT_SCREEN_PALETTE_DATA
+        sta ZEROPAGE_POINTER_2
+        lda #>CURRENT_SCREEN_PALETTE_DATA
+        sta ZEROPAGE_POINTER_2 + 1
+        
+        lda #<CURRENT_SCREEN_ATTRIBUTE_DATA
+        sta ZEROPAGE_POINTER_3
+        lda #>CURRENT_SCREEN_ATTRIBUTE_DATA
+        sta ZEROPAGE_POINTER_3 + 1
+        
+        ldy #$00                                        ;get pointers to level memory
+        lda (ZEROPAGE_POINTER_7),y
+        sta ZEROPAGE_POINTER_4
+        iny
+        lda (ZEROPAGE_POINTER_7),y
+        sta ZEROPAGE_POINTER_4 + 1
+        iny
+        lda (ZEROPAGE_POINTER_7),y
+        sta ZEROPAGE_POINTER_5
+        iny
+        lda (ZEROPAGE_POINTER_7),y
+        sta ZEROPAGE_POINTER_5 + 1
+        iny
+        lda (ZEROPAGE_POINTER_7),y
+        sta ZEROPAGE_POINTER_6
+        iny
+        lda (ZEROPAGE_POINTER_7),y
+        sta ZEROPAGE_POINTER_6 + 1
+        
+        ldy #$00
+        
+.DataCopyLoop
+        lda (ZEROPAGE_POINTER_1),y
+        sta (ZEROPAGE_POINTER_4),y
+        
+        lda (ZEROPAGE_POINTER_2),y
+        sta (ZEROPAGE_POINTER_5),y
+        
+        lda (ZEROPAGE_POINTER_3),y
+        sta (ZEROPAGE_POINTER_6),y
+        
+        iny
+        cpy #$dc                                        ;220 in decimal, number of tiles per screen
+        bne .DataCopyLoop
+        
+        rts
+
+;==========================
+;LEVEL_UnloadSprites    -   TODO
+;this will handle how sprites are 'put away' when changing screen
+;as I'm not sure yet how the player will interact with most sprites
+;this code will simply remove them, allowing them to be reloaded
+;upon returning to the screen.
+;==========================
+!zone LEVEL_UnloadSprites
+LEVEL_UnloadSprites
+
+        ldx #$00
+        lda #$00
+
+.UnloadBufferLoop
+        sta CURRENT_SCREEN_SPRITE_DATA,x
+        inx
+        cpx #$38                            ;56, size of sprite data buffer
+        bne .UnloadBufferLoop
+        
+        sta SPRITE_NPC_NUMBER_ACTIVE
+        sta SPRITE_PRIORITY
+        
+        ldx #$01
+        lda #$ff
+        
+.UnloadDataLoop
+        sta SPRITE_NPC_NUMBER_ACTIVE,x
+        inx
+        cpx #$08
+        bne .UnloadDataLoop
+        
+        lda #$01
+        sta VIC_SPRITE_ENABLE_REGISTER
+        
+        rts
+
+
+;==========================
+;LEVEL_LoadScreenData
+;loads all info needed for a screen
+;==========================
+!zone LEVEL_LoadScreenData
+LEVEL_LoadScreenData
+        jsr LEVEL_LoadData
+        jsr LEVEL_LoadSpriteData
+        jsr LEVEL_InitSprites
+        ;jsr LEVEL_LoadDoorData             ;TODO
+        
+        ;jsr SYSTEM_EnableScreen
         rts
 
 ;==========================
@@ -625,10 +784,11 @@ LEVEL_PlayerChangeScreen
 ;load screen data from raw memory to the current screen buffers
 ;screen index should be stored in x (or a 'current_level' flag later)
 ;===========================
-
-!zone LEVEL_LoadData						;TODO
+!zone LEVEL_LoadData						
 LEVEL_LoadData
-		txa
+		
+        lda PLAYER_CURRENT_SCREEN
+        
 		asl
 		tax									;pointers are 2 bytes, double it to get offset
 
@@ -688,6 +848,68 @@ LEVEL_LoadData
 		bne .LoadData
 		
 		rts									;use linux program convert.c to set a default palette
+
+;==========================
+;LEVEL_LoadSpriteData
+;copies data from memory to buffer
+;==========================
+!zone LoadSpriteData
+LEVEL_LoadSpriteData
+        lda PLAYER_CURRENT_SCREEN
+        asl
+        tax
+
+        ldy #$03                            ;sprite data is in pointer 3 (from 0) of the level data
+        tya
+        asl
+        tay
+
+        lda #<CURRENT_SCREEN_SPRITE_DATA
+        sta ZEROPAGE_POINTER_1
+        lda #>CURRENT_SCREEN_SPRITE_DATA
+        sta ZEROPAGE_POINTER_1 + 1
+
+        lda DATA_LEVEL_POINTERS,x
+        sta ZEROPAGE_POINTER_2
+        lda DATA_LEVEL_POINTERS + 1,x
+        sta ZEROPAGE_POINTER_2 + 1      ;ZP2 now points to the start of the level data
+
+        lda (ZEROPAGE_POINTER_2),y
+        sta ZEROPAGE_POINTER_3
+        iny
+        lda (ZEROPAGE_POINTER_2),y
+        sta ZEROPAGE_POINTER_3 + 1      ;ZP3 now points to the start of the sprite data
+
+        ldy #$00
+        ldx #$ff
+        sty VARIABLE1                   ;counts sprites copied
+
+.CopyLoop
+        lda (ZEROPAGE_POINTER_3),y
+        sta (ZEROPAGE_POINTER_1),y
+        iny
+        inx
+        cpx #$00
+        beq .CheckForSpriteData
+
+        cpx #$08
+        bne .CopyLoop
+
+        inc VARIABLE1
+        ldx VARIABLE1
+        cpx #$07                        ;once the info for 7 sprites has been copied, we're done
+        beq .CopyFinished
+
+        ldx #$ff                        ;otherwise, reset x and go again
+        jmp .CopyLoop
+
+
+.CheckForSpriteData
+        cmp #$00
+        bne .CopyLoop
+
+.CopyFinished
+        rts
 
 ;==========================
 ;LEVEL_DrawScreen
@@ -804,6 +1026,82 @@ LEVEL_DrawTile
 
 		rts
 
+;==============================
+;LEVEL_InitSprites
+;activates sprites after they've been written to the buffer
+;type, colour, action, animation, x grid pos, y grid pos
+;==============================
+        * = $2000
+!zone LEVEL_InitSprites
+LEVEL_InitSprites
+        ldy #$00
+        ldx #$00
+        
+.CheckForSprite
+        lda CURRENT_SCREEN_SPRITE_DATA,y
+        cmp #$00
+        beq .NoMoreSpritesToLoad
+        
+.InitializeSprite
+        inc SPRITE_NPC_NUMBER_ACTIVE
+        ldx SPRITE_NPC_NUMBER_ACTIVE                ;x will now store the sprites index for memory structures
+                        
+        sta SPRITE_TYPE,x
+        
+        iny                                         ;load the sprite info from current screen buffers to sprite structures
+        lda CURRENT_SCREEN_SPRITE_DATA,y
+        sta SPRITE_UNIQUE_COLOR,x
+        
+        iny
+        lda CURRENT_SCREEN_SPRITE_DATA,y
+        sta SPRITE_CURRENT_ACTION,x
+        sta SPRITE_NEXT_ACTION,x
+        
+        iny
+        lda CURRENT_SCREEN_SPRITE_DATA,y
+        sta VARIABLE1
+        sty VARIABLE7
+        jsr LOGIC_ChangeAnimation
+        
+        ldy VARIABLE7
+        iny 
+        lda CURRENT_SCREEN_SPRITE_DATA,y
+        sta VARIABLE1
+        
+        iny 
+        lda CURRENT_SCREEN_SPRITE_DATA,y
+        sta VARIABLE2
+        
+        sty VARIABLE7
+        jsr LOGIC_PlaceSpriteInTile
+        ldy VARIABLE7
+        
+        iny                                         ;currently only using 6 bytes for sprite data, but left 2 more in case they are needed
+        iny
+        iny                                         ;this puts us on the next sprites data
+        
+        txa
+        sta SPRITE_PRIORITY,x
+        
+        cpx #$07
+        bne .CheckForSprite
+        
+.NoMoreSpritesToLoad
+        inx                                         ;total number of sprites, now including player
+        lda #$00                                    ;this will set the 'sprites enabled' register
+
+.EnableLoop
+        sec
+        rol
+        dex
+        cpx #$00
+        bne .EnableLoop
+        
+        sta VIC_SPRITE_ENABLE_REGISTER
+        
+.InitSpritesFinished
+        rts
+        
   
 ;=========================================================================
 ;   INPUT FUNCTIONS
@@ -1270,7 +1568,7 @@ LOGIC_PlayerMoveRight
 ;================================================
 !zone LOGIC_PlayerButton
 LOGIC_PlayerButton
-        inc $d020
+        jsr TEST_EditTile
 		rts
 
 
@@ -1319,6 +1617,11 @@ LOGIC_MoveSpriteRight
 !zone LOGIC_UpdateSpritePriority
 LOGIC_UpdateSpritePriority
 		ldx SPRITE_NPC_NUMBER_ACTIVE
+        cpx #$00
+        bne .PrepareSort
+        rts
+        
+.PrepareSort
 		stx VARIABLE5
 		inc VARIABLE5
 		ldx #$00
@@ -1694,18 +1997,20 @@ MATHS_Multiply
 ;sorts sprites indices from lowest to highest ie, highest y positions first
 ;expects number of elements to sort in VARIABLE5 and data to be in specific buffer
 ;============================
-		* = $1a00
 
 !zone MATHS_BubbleSort
 MATHS_BubbleSort
 
 		lda VARIABLE5
-		cmp #$08
+		cmp #$00
+        beq .SortFinished       ;return if there's nothing to sort
+        
+        cmp #$08
 		bcc .StartSort
 		
 		lda #$07
 		sta VARIABLE5			;make sure we never check too many items
-		
+	
 .StartSort
 		ldx #$00
 		stx VARIABLE4			;counts number of passes of sorting routine
@@ -1757,7 +2062,6 @@ MATHS_BubbleSort
 .SortFinished
 		rts
 	
-		* = $2000
 BUBBLE_DATA_VALUES
 		!byte $00, $00, $00, $00, $00, $00, $00, $00
 		
@@ -1845,23 +2149,6 @@ TEST_DrawTile
 TEST_FrameTimer
 		inc VIC_BORDER_COLOR
 		rts
-
-;=========================
-;TEST_LevelSwitch
-;changes screen at the touch of a button
-;=========================
-!zone TEST_LevelSwitch
-TEST_LevelSwitch
-        lda JOYSTICK_2
-        and #%00010000                  ;check button
-        bne .NoButton                   ;a '0' means the button IS pressed
-
-        ldx #$02                        ;index of second screen
-        jsr LEVEL_LoadData
-        jsr LEVEL_DrawScreen
-
-.NoButton
-        rts
 		
 ;=========================
 ;TEST_LoadSprite
@@ -1916,6 +2203,9 @@ TEST_LoadSprite
         
         ldy VARIABLE7
         iny
+
+        iny
+        iny                             ;sprite data takes 8 bytes
         
         cpx #$03
         bne .LoadSprite
@@ -1929,8 +2219,43 @@ TEST_LoadSprite
 		bne .EnableLoop
 		
 		sta VIC_SPRITE_ENABLE_REGISTER
-		
+
+.Finished
 		rts
+        
+;========================
+;TEST_EditTile
+;make a tile 'flowers' for testing
+;========================
+!zone TEST_EditTile
+TEST_EditTile
+        lda SPRITE_TILE_X_POSITION
+        sta VARIABLE1                           ;VAR1 for DrawTile
+        lda SPRITE_TILE_Y_POSITION
+        sta VARIABLE2
+        sta MULTI1
+        
+        lda #LEVEL_TILE_WIDTH
+        sta MULTI2
+        
+        jsr MATHS_Multiply
+        lda MULTIL
+        clc
+        adc SPRITE_TILE_X_POSITION
+        
+        tax
+        
+        lda #$14                                ;FLOWERS tile
+        sta VARIABLE3
+        sta CURRENT_SCREEN_TILE_DATA,x          ;update level buffers
+        
+        lda #$0b                                ;CYAN multicolour
+        sta VARIABLE4
+        sta CURRENT_SCREEN_PALETTE_DATA,x
+        
+        jsr LEVEL_DrawTile                      ;LEVEL_DrawTile needs coords in V1, V2 and Tile and Palette in V3 and V4
+        
+        rts
 
 ;=========================================================================
 ;	CURRENT SCREEN DATA
@@ -1977,18 +2302,28 @@ CURRENT_SCREEN_ATTRIBUTE_DATA
 		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
 		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
 		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
-
-;type, colour, action, animation, x grid pos, y grid pos
+        * = $3000
+;type, colour, action, animation, x grid pos, y grid pos - max of 7
 CURRENT_SCREEN_SPRITE_DATA
-     !byte $01,      WHITE,      $01,     $10,       $12,    $01                      
-     !byte $01,      RED,        $01,     $09,       $07,    $08
-     !byte $01,      BLUE,       $01,     $0a,       $02,    $07
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
 
+;includes stairs and secrets - any way of transition to another screen other than walking off the edge - max of 4 per screen
+CURRENT_SCREEN_DOOR_DATA
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
 ;=================================================================
 ;   SPRITE PLACEMENT DATA
 ;=================================================================
 
-        * = $3000
+        * = $4000
 
 SPRITE_NPC_NUMBER_ACTIVE
 		!byte $00												;number of non-player sprites
@@ -2013,8 +2348,7 @@ SPRITE_TILE_X_DELTA                                             ;how far through
 
 SPRITE_TILE_Y_DELTA
         !byte $00, $00, $00, $00, $00, $00, $00, $00
-		
-		* = $3100
+
 SPRITE_PRIORITY
 		!byte $00, $ff, $ff, $ff, $ff, $ff, $ff, $ff			;lower sprites should show over higher
 		
@@ -2245,75 +2579,120 @@ DATA_LEVEL_POINTERS
         !word 0
 
 DATA_LEVEL_0_POINTER
-        !word DATA_LEVEL_0
-        !word DATA_LEVEL_0 + 220
-        !word DATA_LEVEL_0 + 440
+        !word DATA_LEVEL_0                  ;Tile Data
+        !word DATA_LEVEL_0 + 220            ;Palette Data
+        !word DATA_LEVEL_0 + 440            ;Attribute Flag Data
+        !word DATA_LEVEL_0 + 660            ;Sprite Data
+        !word DATA_LEVEL_0 + 716            ;Door Data
 DATA_LEVEL_1_POINTER
         !word DATA_LEVEL_1
         !word DATA_LEVEL_1 + 220
         !word DATA_LEVEL_1 + 440
+        !word DATA_LEVEL_1 + 660
+        !word DATA_LEVEL_1 + 716
 DATA_LEVEL_2_POINTER
         !word DATA_LEVEL_2
         !word DATA_LEVEL_2 + 220
-        !word DATA_LEVEL_2 + 440
+        !word DATA_LEVEL_2 + 440 
+        !word DATA_LEVEL_2 + 660
+        !word DATA_LEVEL_2 + 716
 DATA_LEVEL_3_POINTER
         !word DATA_LEVEL_3
         !word DATA_LEVEL_3 + 220
-        !word DATA_LEVEL_3 + 440
+        !word DATA_LEVEL_3 + 440 
+        !word DATA_LEVEL_3 + 660
+        !word DATA_LEVEL_3 + 716
+
 DATA_LEVEL_4_POINTER
         !word DATA_LEVEL_4
         !word DATA_LEVEL_4 + 220
-        !word DATA_LEVEL_4 + 440
+        !word DATA_LEVEL_4 + 440 
+        !word DATA_LEVEL_4 + 660
+        !word DATA_LEVEL_4 + 716
+
 DATA_LEVEL_5_POINTER
         !word DATA_LEVEL_5
         !word DATA_LEVEL_5 + 220
-        !word DATA_LEVEL_5 + 440
+        !word DATA_LEVEL_5 + 440 
+        !word DATA_LEVEL_5 + 660
+        !word DATA_LEVEL_5 + 716
+
 DATA_LEVEL_6_POINTER
         !word DATA_LEVEL_6
         !word DATA_LEVEL_6 + 220
-        !word DATA_LEVEL_6 + 440
+        !word DATA_LEVEL_6 + 440 
+        !word DATA_LEVEL_6 + 660
+        !word DATA_LEVEL_6 + 716
+
 DATA_LEVEL_7_POINTER
         !word DATA_LEVEL_7
         !word DATA_LEVEL_7 + 220
-        !word DATA_LEVEL_7 + 440
+        !word DATA_LEVEL_7 + 440 
+        !word DATA_LEVEL_7 + 660
+        !word DATA_LEVEL_7 + 716
+
 DATA_LEVEL_8_POINTER
         !word DATA_LEVEL_8
         !word DATA_LEVEL_8 + 220
-        !word DATA_LEVEL_8 + 440
+        !word DATA_LEVEL_8 + 440 
+        !word DATA_LEVEL_8 + 660
+        !word DATA_LEVEL_8 + 716
+
 DATA_LEVEL_9_POINTER
         !word DATA_LEVEL_9
         !word DATA_LEVEL_9 + 220
-        !word DATA_LEVEL_9 + 440
+        !word DATA_LEVEL_9 + 440 
+        !word DATA_LEVEL_9 + 660
+        !word DATA_LEVEL_9 + 716
+
 DATA_LEVEL_10_POINTER
         !word DATA_LEVEL_10
         !word DATA_LEVEL_10 + 220
-        !word DATA_LEVEL_10 + 440
+        !word DATA_LEVEL_10 + 440 
+        !word DATA_LEVEL_10 + 660
+        !word DATA_LEVEL_10 + 716
+
 DATA_LEVEL_11_POINTER
         !word DATA_LEVEL_11
         !word DATA_LEVEL_11 + 220
-        !word DATA_LEVEL_11 + 440
+        !word DATA_LEVEL_11 + 440 
+        !word DATA_LEVEL_11 + 660
+        !word DATA_LEVEL_11 + 716
+
 DATA_LEVEL_12_POINTER
         !word DATA_LEVEL_12
         !word DATA_LEVEL_12 + 220
-        !word DATA_LEVEL_12 + 440
+        !word DATA_LEVEL_12 + 440 
+        !word DATA_LEVEL_12 + 660
+        !word DATA_LEVEL_12 + 716
+
 DATA_LEVEL_13_POINTER
         !word DATA_LEVEL_13
         !word DATA_LEVEL_13 + 220
-        !word DATA_LEVEL_13 + 440
+        !word DATA_LEVEL_13 + 440 
+        !word DATA_LEVEL_13 + 660
+        !word DATA_LEVEL_13 + 716
+
 DATA_LEVEL_14_POINTER
         !word DATA_LEVEL_14
         !word DATA_LEVEL_14 + 220
-        !word DATA_LEVEL_14 + 440
+        !word DATA_LEVEL_14 + 440 
+        !word DATA_LEVEL_14 + 660
+        !word DATA_LEVEL_14 + 716
+
 DATA_LEVEL_15_POINTER
         !word DATA_LEVEL_15
         !word DATA_LEVEL_15 + 220
-        !word DATA_LEVEL_15 + 440
+        !word DATA_LEVEL_15 + 440 
+        !word DATA_LEVEL_15 + 660
+        !word DATA_LEVEL_15 + 716
+
 
 
 DATA_LEVEL_0
-        !binary "testlvls/levela.lvl"
+        !source "testlvls/level0test.txt"
 DATA_LEVEL_1
-        !binary "testlvls/levelb.lvl"
+        !source "testlvls/level1test.txt"
 DATA_LEVEL_2
         !binary "testlvls/levelc.lvl"
 DATA_LEVEL_3
@@ -2352,3 +2731,5 @@ CHARSET_DATA
 
 SPRITE_DATA
 		!binary "graphics/sprites.spr"
+
+!sl "test.txt"
