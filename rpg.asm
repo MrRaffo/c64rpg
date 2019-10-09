@@ -113,7 +113,9 @@ TILE_HALF_SIDE                  = 8
 SPRITE_SIZE                     = 16
 SPRITE_HALF_SIZE                = 8
 SPRITE_CLIPPING_DISTANCE_LEFT	= SPRITE_HALF_SIZE - 4
-SPRITE_CLIPPING_DISTANCE_RIGHT  = SPRITE_HALF_SIZE + 4
+SPRITE_CLIPPING_DISTANCE_RIGHT  = SPRITE_HALF_SIZE + 6
+SPRITE_CLIPPING_DISTANCE_UP		= SPRITE_HALF_SIZE
+SPRITE_CLIPPING_DISTANCE_DOWN 	= 0
 
 ;DIRECTION
 DIRECTION_UP					= 1
@@ -780,12 +782,36 @@ LOGIC_PlayerMoveUp
 		tay
 		lda CURRENT_SCREEN_ATTRIBUTE_DATA,y
 		and #$01						;check if low bit is set		
-		beq .CanMoveUp			;if so, we can't move
+		bne .NoMoveAvailable			;if so, we can't move
 		
 										;we now have to check for blocks to the above right and
 										;above left of the sprite to avoid clipping problems
 										
-		;lda SPRITE_TILE_X_DELTA,x
+		lda SPRITE_TILE_X_DELTA,x
+		cmp #SPRITE_HALF_SIZE
+		bmi .CheckUpperLeft
+		
+.CheckUpperRight
+		cmp #(SPRITE_CLIPPING_DISTANCE_RIGHT + 1)
+		bmi .CanMoveUp					;if we haven't moved too far to the right, move up
+		
+		iny
+		lda CURRENT_SCREEN_ATTRIBUTE_DATA,y
+		and #$01
+		bne .NoMoveAvailable
+		
+		jmp .CanMoveUp
+		
+.CheckUpperLeft
+		cmp #SPRITE_CLIPPING_DISTANCE_LEFT
+		bpl .CanMoveUp
+		
+		dey
+		lda CURRENT_SCREEN_ATTRIBUTE_DATA,y
+		and #$01
+		bne .NoMoveAvailable
+		
+		jmp .CanMoveUp
 		
 
 .NoMoveAvailable		
@@ -838,7 +864,33 @@ LOGIC_PlayerMoveDown
 		tay
 		lda CURRENT_SCREEN_ATTRIBUTE_DATA,y
 		and #$01
-		beq .CanMoveDown
+		bne .NoMoveAvailable
+		
+		lda SPRITE_TILE_X_DELTA,x
+		cmp #SPRITE_HALF_SIZE
+		bmi .CheckLowerLeft
+		
+.CheckLowerRight
+		cmp #(SPRITE_CLIPPING_DISTANCE_RIGHT + 1)
+		bmi .CanMoveDown
+		
+		iny
+		lda CURRENT_SCREEN_ATTRIBUTE_DATA,y
+		and #$01
+		bne .NoMoveAvailable
+		
+		jsr .CanMoveDown
+		
+.CheckLowerLeft
+		cmp #SPRITE_CLIPPING_DISTANCE_LEFT
+		bpl .CanMoveDown
+		
+		dey
+		lda CURRENT_SCREEN_ATTRIBUTE_DATA,y
+		and #$01
+		bne .NoMoveAvailable
+		
+		jsr .CanMoveDown
 		
 .NoMoveAvailable
 		rts
@@ -892,6 +944,20 @@ LOGIC_PlayerMoveLeft
 		
 		lda CURRENT_SCREEN_ATTRIBUTE_DATA,y
 		and #$01
+		bne .NoMoveAvailable
+		
+		lda SPRITE_TILE_Y_DELTA,x
+		cmp #SPRITE_CLIPPING_DISTANCE_UP
+		bpl .CanMoveLeft
+		
+.CheckUpperLeft
+		tya
+		sec
+		sbc #LEVEL_TILE_WIDTH				;get address of tile above player to the left
+		tay
+		
+		lda CURRENT_SCREEN_ATTRIBUTE_DATA,y
+		and #$01
 		beq .CanMoveLeft
 		
 .NoMoveAvailable
@@ -908,7 +974,7 @@ LOGIC_PlayerMoveRight
 
         ldx #$00
 		lda SPRITE_TILE_X_DELTA,x
-		cmp #SPRITE_HALF_SIZE
+		cmp #SPRITE_CLIPPING_DISTANCE_RIGHT
 		beq .CheckCanMoveRight
 		
 .CanMoveRight
@@ -943,6 +1009,20 @@ LOGIC_PlayerMoveRight
 		
 		tay
 		iny 							;get tile to right of player
+		
+		lda CURRENT_SCREEN_ATTRIBUTE_DATA,y
+		and #$01
+		bne .NoMoveAvailable
+		
+		lda SPRITE_TILE_Y_DELTA,x
+		cmp #SPRITE_CLIPPING_DISTANCE_UP
+		bpl .CanMoveRight
+		
+.CheckUpperRight
+		tya
+		sec
+		sbc	#LEVEL_TILE_WIDTH
+		tay
 		
 		lda CURRENT_SCREEN_ATTRIBUTE_DATA,y
 		and #$01
