@@ -15,6 +15,8 @@
 
 ;ver 7: re-introduced animations
 
+;ver 8: added changing sprite priorities and extended x coords
+
 ;================================================
 ;CONSTANTS
 ;================================================
@@ -45,7 +47,7 @@ JOYSTICK_1                      = $dc01
 
 ;VIC CHIP
 
-VIC_CONTROL_REGISTER_1          = $d011         ;raster top bit (#7), screen height, screen visibility
+VIC_CONTROL_REGISTER_1          = $d011         ;raster top bit (#8), screen height, screen visibility
 VIC_CONTROL_REGISTER_2          = $d016         ;screen width and multicolour mode
 VIC_RASTER_REGISTER             = $d012
 VIC_MEMORY_CONTROL              = $d018         ; bits #1-#3 pointer to char memory, #4-#7 pointer to sceen memory
@@ -100,7 +102,7 @@ MULTI2                          = $27           ;operand 2
 MULTIL                          = $28           ;result low-byte
 MULTIH                          = $29           ;result high-byte
 
-NUMBER_OF_SPRITES               = $20
+NUMBER_OF_SPRITES               = $40
 SPRITE_BASE                     = $40               ;64 in decimal
 SPRITE_END                      = SPRITE_BASE + NUMBER_OF_SPRITES
 SPRITE_POINTER_BASE             = SCREEN_CHAR_BUFFER + $3f8     ;1016 bytes after screen buffer
@@ -138,6 +140,7 @@ ACTION_PLAYER_WALK_RIGHT		= 8
 ACTION_PLAYER_TALK				= 9
 ACTION_PLAYER_DANCE				= 10
 
+ACTION_GENERAL_IDLE				= 11
 
 ;ANIMATION INDICES
 ANIMATION_PLAYER_STAND_UP		= 1
@@ -150,6 +153,13 @@ ANIMATION_PLAYER_WALK_LEFT		= 7
 ANIMATION_PLAYER_WALK_RIGHT		= 8
 ANIMATION_PLAYER_TALK			= 9
 ANIMATION_PLAYER_DANCE			= 10
+
+ANIMATION_SHEEP_STAND_LEFT		= 11
+ANIMATION_SHEEP_STAND_RIGHT		= 12
+ANIMATION_SHEEP_WALK_LEFT		= 13
+ANIMATION_SHEEP_WALK_RIGHT		= 14
+ANIMATION_SHEEP_EAT_LEFT		= 15
+ANIMATION_SHEEP_EAT_RIGHT		= 16
 
 
 ;=========================================================
@@ -246,7 +256,7 @@ ANIMATION_PLAYER_DANCE			= 10
 		lda #MIDDLE_GREY
 		sta VIC_BGCOLOR_2
 
-		ldx #$00							;LEVEL index
+		ldx #$01							;LEVEL index
 		jsr LEVEL_LoadData
 		jsr LEVEL_DrawScreen
 
@@ -260,7 +270,8 @@ ANIMATION_PLAYER_DANCE			= 10
         ldx #$01
         stx VIC_SPRITE_ENABLE_REGISTER
 
-        ldx #LIGHT_GREY
+        ldx #GREEN
+		stx SPRITE_UNIQUE_COLOR
         stx VIC_SPRITE_COLOR_BASE
 
         ldx #ORANGE
@@ -288,6 +299,12 @@ ANIMATION_PLAYER_DANCE			= 10
 		
 		ldx #DIRECTION_DOWN
 		stx SPRITE_CURRENT_DIRECTION
+		
+		;=========================
+		;Load npc sprite for testing
+		;=========================
+		
+		jsr TEST_LoadSprite
 	
 		
 ;====================================================================
@@ -303,9 +320,7 @@ GameLoop
 		jsr SYSTEM_HandleInput
 		
 		jsr SYSTEM_HandleLogic
-		
-		jsr SYSTEM_HandleAnimation
-		
+				
 		jsr LOGIC_UpdateSpriteAction
 		
 		jsr SYSTEM_WaitFrame    			;wait until frame is finished
@@ -330,18 +345,12 @@ SYSTEM_HandleInput
 ;==========================
 !zone SYSTEM_HandleLogic
 SYSTEM_HandleLogic
-		jsr LOGIC_UpdateSpritePositions
+		jsr LOGIC_UpdateAnimation
+		jsr LOGIC_UpdateSpritePriority
+		jsr LOGIC_UpdateSpriteData
+		jsr LOGIC_HandleExtendBit
 		rts
 		
-;==========================
-;SYSTEM_HandleAnimation
-;==========================
-!zone SYSTEM_HandleAnimation
-SYSTEM_HandleAnimation
-		jsr LOGIC_UpdateAnimation
-		jsr LOGIC_UpdateSpriteAnimationData
-		rts
-
 
 ;==========================
 ;SYSTEM_HandleAction
@@ -1083,7 +1092,7 @@ LOGIC_PlayerMoveRight
 ;================================================
 !zone LOGIC_PlayerButton
 LOGIC_PlayerButton
-        lda #ANIMATION_PLAYER_DANCE
+        lda #ANIMATION_SHEEP_WALK_LEFT
 		sta VARIABLE1
 		ldx #$00
 		jsr LOGIC_ChangeAnimation
@@ -1129,28 +1138,124 @@ LOGIC_MoveSpriteRight
         rts
 
 ;============================
-;UpdateSpritePositions
+;LOGIC_UpdateSpritePriority
+;prepares data and calls bubblesort routine
+;============================
+!zone LOGIC_UpdateSpritePriority
+LOGIC_UpdateSpritePriority
+		ldx SPRITE_NPC_NUMBER_ACTIVE
+		stx VARIABLE5
+		inc VARIABLE5
+		ldx #$00
+		
+.CopyDataToBuffer
+		ldy SPRITE_PRIORITY,x
+		lda SPRITE_Y_POSITION,y
+		sta BUBBLE_DATA_VALUES,x
+		tya
+		sta BUBBLE_DATA_INDICES,x
+		inx
+		cpx VARIABLE5
+		bne .CopyDataToBuffer
+		
+		dec VARIABLE5
+		
+		jsr MATHS_BubbleSort
+		
+.CopyDataToSpriteMemory
+		ldx #$00
+		inc VARIABLE5
+.CopyLoop
+		lda BUBBLE_DATA_INDICES,x
+		sta SPRITE_PRIORITY,x
+		inx
+		cpx VARIABLE5
+		bne .CopyLoop
+		
+		rts
+		
+;============================
+;LOGIC_UpdateSpriteData
 ;moves sprite coord data from memory to their registers
 ;============================
-!zone LOGIC_UpdateSpritePositions
-LOGIC_UpdateSpritePositions
-        ldx #$00                ;index
-
+!zone LOGIC_UpdateSpriteData
+LOGIC_UpdateSpriteData
+        ldx SPRITE_NPC_NUMBER_ACTIVE
+		inx
+		stx VARIABLE2
+		
+		ldx #$00                		;index
+		stx VARIABLE1
+		
 .UpdateLoop
-        txa
-        asl                     ;double the index as X and Y coords are interlaces
-        tay
+		
+		ldx VARIABLE1
+		ldy SPRITE_PRIORITY,x
+		
+		lda SPRITE_UNIQUE_COLOR,x
+		sta VIC_SPRITE_COLOR_BASE,y
+		
+		lda SPRITE_CURRENT_ANIMATION_FRAME,x
+		sta SPRITE_POINTER_BASE,y
+		
+		txa
+		asl
+		tax
+		
+		lda SPRITE_X_POSITION,y
+		sta VIC_SPRITE_X_COORD,x
+		
+		lda SPRITE_Y_POSITION,y
+		sta VIC_SPRITE_Y_COORD,x
+		
+		inc VARIABLE1
+		ldx VARIABLE1
+		cpx VARIABLE2
+		bne .UpdateLoop
 
-        lda SPRITE_Y_POSITION,x
-        sta VIC_SPRITE_Y_COORD,y
+		rts
+		
+;=================================
+;LOGIC_HandleExtendBit
+;rearranges the extend bit based on priorities
+;=================================
+!zone LOGIC_HandleExtendBit
+LOGIC_HandleExtendBit
+		
+		ldx SPRITE_NPC_NUMBER_ACTIVE
+		inx
+		stx VARIABLE1
+		
+		ldx #$00
+		stx VARIABLE2
+		stx VARIABLE3
+		
+.UpdateLoop
+		ldy SPRITE_PRIORITY,x
+		lda BIT_MASK,y
+		
+		bit SPRITE_X_EXTEND
+		beq .UnsetBit
+		
+.SetBit
+		lda BIT_MASK,x
+		ora VARIABLE2
+		sta VARIABLE2
+		jmp .CheckIfDone
+		
+.UnsetBit
+		lda BIT_MASK,x
+		eor #$ff
+		and VARIABLE2
+		sta VARIABLE2
+		
+.CheckIfDone
+		inx
+		cpx VARIABLE1
+		bne .UpdateLoop
 
-        lda SPRITE_X_POSITION,x
-        sta VIC_SPRITE_X_COORD,y
-        inx
-        cpx #$08
-        bne .UpdateLoop
-
-        lda SPRITE_X_EXTEND
+.UpdateVicRegister		
+		lda VARIABLE2
         sta VIC_SPRITE_X_EXTEND
 
         rts
@@ -1353,21 +1458,6 @@ LOGIC_ChangeAnimation
 		
 		rts
 		
-;===========================
-;LOGIC_UpdateSpriteAnimationData
-;moves sprite data to vic registers
-;===========================
-!zone LOGIC_UpdateSpriteAnimationData
-LOGIC_UpdateSpriteAnimationData
-		ldx #$00
-.CopyLoop
-		lda SPRITE_CURRENT_ANIMATION_FRAME,x
-		sta SPRITE_POINTER_BASE,x
-		inx
-		cpx #$08
-		bne .CopyLoop
-		
-		rts
 		
 ;============================
 ;LOGIC_UpdateSpriteAction
@@ -1423,6 +1513,81 @@ MATHS_Multiply
         sta MULTIL              ;accumulator holds low byte of result, high byte set during operation
         rts
 
+		
+;===========================
+;MATHS_BubbleSort
+;sorts sprites indices from lowest to highest ie, highest y positions first
+;expects number of elements to sort in VARIABLE5 and data to be in specific buffer
+;============================
+		* = $1a00
+
+!zone MATHS_BubbleSort
+MATHS_BubbleSort
+
+		lda VARIABLE5
+		cmp #$08
+		bcc .StartSort
+		
+		lda #$07
+		sta VARIABLE5			;make sure we never check too many items
+		
+.StartSort
+		ldx #$00
+		stx VARIABLE4			;counts number of passes of sorting routine
+		
+.BubbleSort
+		ldx #$00
+		ldy #$00
+		stx VARIABLE1			;temp storage for swapping data
+		stx VARIABLE2			;temp storage for swapping indices
+		stx VARIABLE3			;counts number of swaps, when this is zero, we're done
+		inc VARIABLE4			;sets to zero first run through, then counts
+		
+.SortLoop
+		lda BUBBLE_DATA_VALUES,y
+		sta VARIABLE1
+		iny
+		inx
+		lda BUBBLE_DATA_VALUES,y
+		cmp VARIABLE1
+		bcc .NoSwapNeeded
+		beq .NoSwapNeeded
+		
+.SwapValues
+		dey
+		sta BUBBLE_DATA_VALUES,y
+		lda BUBBLE_DATA_INDICES,y
+		sta VARIABLE2
+		lda BUBBLE_DATA_INDICES,x
+		dex
+		sta BUBBLE_DATA_INDICES,x
+		iny
+		inx
+		lda VARIABLE1
+		sta BUBBLE_DATA_VALUES,y
+		lda VARIABLE2
+		sta BUBBLE_DATA_INDICES,x
+		
+		inc VARIABLE3			;we've swapped, so set the flag, we're not done yet
+		
+.NoSwapNeeded
+		cpy VARIABLE5			;V5 = total number of sprites - 1, no point checking for more
+		bne .SortLoop
+		
+.CheckIfFinished
+		lda VARIABLE3
+		cmp #$00
+		bne .BubbleSort
+		
+.SortFinished
+		rts
+	
+		* = $2000
+BUBBLE_DATA_VALUES
+		!byte $00, $00, $00, $00, $00, $00, $00, $00
+		
+BUBBLE_DATA_INDICES
+		!byte $00, $00, $00, $00, $00, $00, $00, $00
 
 ;=========================================================================
 ;	TEST FUNCTIONS
@@ -1523,6 +1688,52 @@ TEST_LevelSwitch
 .NoButton
         rts
 		
+;=========================
+;TEST_LoadSprite
+;initializes a sprite to test various routines
+;=========================
+!zone TEST_LoadSprite
+TEST_LoadSprite
+		inc SPRITE_NPC_NUMBER_ACTIVE
+		ldx SPRITE_NPC_NUMBER_ACTIVE
+		
+		lda #$0a
+		sta VARIABLE1
+		lda #$09
+		sta VARIABLE2					;on screen tile coords
+		
+		jsr LOGIC_PlaceSpriteInTile
+		
+		txa
+		sta SPRITE_PRIORITY,x
+		
+		lda #ACTION_GENERAL_IDLE
+		sta SPRITE_CURRENT_ACTION,x
+		sta SPRITE_NEXT_ACTION,x
+		
+		lda #WHITE
+		sta SPRITE_UNIQUE_COLOR,x
+		
+		lda #ANIMATION_SHEEP_EAT_RIGHT
+		sta VARIABLE1
+		
+		jsr LOGIC_ChangeAnimation
+		
+		ldx SPRITE_NPC_NUMBER_ACTIVE
+		inx								;increase to include player
+		lda #$00
+		
+.EnableLoop
+		sec
+		rol								;add 'bits' for each sprite
+		dex
+		bne .EnableLoop
+		
+		sta VIC_SPRITE_ENABLE_REGISTER
+		
+		rts
+		
+		
 ;=========================================================================
 ;	CURRENT SCREEN DATA
 ;=========================================================================
@@ -1582,6 +1793,9 @@ CURRENT_SCREEN_GENERAL_DATA
 ;   SPRITE PLACEMENT DATA
 ;=================================================================
 
+SPRITE_NPC_NUMBER_ACTIVE
+		!byte $00												;number of non-player sprites
+
 SPRITE_X_EXTEND
         !byte $00
 
@@ -1603,12 +1817,19 @@ SPRITE_TILE_X_DELTA                                             ;how far through
 SPRITE_TILE_Y_DELTA
         !byte $00, $00, $00, $00, $00, $00, $00, $00
 		
+		* = $3000
+SPRITE_PRIORITY
+		!byte $00, $ff, $ff, $ff, $ff, $ff, $ff, $ff			;lower sprites should show over higher
+		
+SPRITE_UNIQUE_COLOR
+		!byte $00, $00, $00, $00, $00, $00, $00, $00			;lower sprites should show over higher
+		
 ;=================================================================
 ;   SPRITE ACTION DATA
 ;=================================================================
 
-SPRITE_PRIORITY
-		!byte $00, $00, $00, $00, $00, $00, $00, $00			;lower sprites should show over higher
+SPRITE_TYPE
+		!byte $00, $00, $00, $00, $00, $00, $00, $00			;for AI routines
 
 SPRITE_CURRENT_ACTION											;what the sprite is currently up to
 		!byte $00, $00, $00, $00, $00, $00, $00, $00
@@ -1618,6 +1839,13 @@ SPRITE_CURRENT_DIRECTION
 		
 SPRITE_NEXT_ACTION												;next action for sprite
 		!byte $00, $00, $00, $00, $00, $00, $00, $00
+		
+SPRITE_DECISION_TIMER
+		!byte $00, $00, $00, $00, $00, $00, $00, $00			;time between npc actions
+
+;=================================================================
+;   SPRITE ANIMATION DATA
+;=================================================================
 		
 SPRITE_CURRENT_ANIMATION_FRAME									;what the sprite should display
 		!byte $00, $00, $00, $00, $00, $00, $00, $00
@@ -1669,6 +1897,9 @@ SCREEN_ROW_HIGH_BYTE
 PLAYER_JOYSTICK_STATUS
         !byte $00
 
+;=========================================================================
+;   GAME FLAGS
+;=========================================================================
 
 ;=========================================================================
 ;   GENERAL DATA
@@ -1698,7 +1929,19 @@ ANIMATION_LIST
 		!word ANIM_PLAYER_WALK_RIGHT
 		!word ANIM_PLAYER_TALK
 		!word ANIM_PLAYER_DANCE
+		
+		!word ANIM_SHEEP_STAND_LEFT
+		!word ANIM_SHEEP_STAND_RIGHT
+		!word ANIM_SHEEP_WALK_LEFT
+		!word ANIM_SHEEP_WALK_RIGHT
+		!word ANIM_SHEEP_EAT_LEFT
+		!word ANIM_SHEEP_EAT_RIGHT
 
+		
+;==========================================
+;	PLAYER ANIMATION DATA
+;==========================================
+		
 ANIM_PLAYER_STAND_UP
 		!byte $08
 		!byte $4b, $00						;one frame for standing
@@ -1739,30 +1982,60 @@ ANIM_PLAYER_DANCE
 		!byte $0a							;Timer
 		!byte $50, $51, $52, $51, $00 		;Frame List
 		
+
+;================================================
+;	SHEEP ANIMATION DATA
+;================================================
+
+ANIM_SHEEP_STAND_LEFT
+		!byte $01
+		!byte $6c, $00
+		
+ANIM_SHEEP_STAND_RIGHT
+		!byte $01
+		!byte $68, $00
+		
+ANIM_SHEEP_WALK_LEFT
+		!byte $06
+		!byte $72, $6c, $73, $6c, $00
+		
+ANIM_SHEEP_WALK_RIGHT
+		!byte $06
+		!byte $70, $68, $71, $68, $00
+		
+ANIM_SHEEP_EAT_LEFT
+		!byte $08
+		!byte $6c, $6d, $6e, $6f, $6e, $6d, $00
+
+ANIM_SHEEP_EAT_RIGHT
+		!byte $08
+		!byte $68, $69, $6a, $6b, $6a, $69, $00
+		
 ;======================
 ;	LEVEL DATA
 ;======================
 
 DATA_LEVEL_POINTERS
-        !word DATA_LEVEL_0_POINTER
+		!word 0
         !word DATA_LEVEL_1_POINTER
+        !word DATA_LEVEL_2_POINTER
         !word 0
-
-DATA_LEVEL_0_POINTER
-        !word DATA_LEVEL_0
-        !word DATA_LEVEL_0 + 220
-        !word DATA_LEVEL_0 + 440
 
 DATA_LEVEL_1_POINTER
         !word DATA_LEVEL_1
         !word DATA_LEVEL_1 + 220
         !word DATA_LEVEL_1 + 440
 
-DATA_LEVEL_0
-        !binary "levels/level0.lvl"
+DATA_LEVEL_2_POINTER
+        !word DATA_LEVEL_2
+        !word DATA_LEVEL_2 + 220
+        !word DATA_LEVEL_2 + 440
 
 DATA_LEVEL_1
         !binary "levels/level1.lvl"
+
+DATA_LEVEL_2
+        !binary "levels/level2.lvl"
 		
 ;=========================================================================
 ;	EXTERNAL DATA
