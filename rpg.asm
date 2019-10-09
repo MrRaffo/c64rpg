@@ -7,7 +7,10 @@
 ;ver 4: added animations and basic keyboard reading - pressing 1 to 4 will choose a different animation for player sprite
 ;ver 5: (b) added better animations and changed movement to 1 pixel per frame and one of four directions at a time
 
-;ver 6: complete rewrite
+;ver 6: version 6 is a re-write, the level structure has been changed, so far it has
+;       new level structure and level loading, per-tile coloring and per-tile attribute flags
+;       basic joystick reading
+;       sprite movement, but no sprite animation
 
 ;================================================
 ;CONSTANTS
@@ -55,6 +58,10 @@ VIC_BGCOLOR_1                   = $d022
 VIC_BGCOLOR_2                   = $d023
 VIC_BGCOLOR_3                   = $d024
 
+VIC_SCREEN_OFFSET_X             = 24
+VIC_SCREEN_OFFSET_Y             = 45            ;these are the coordinates of the bottom left of the first tile on screen
+                                                ;use these to calculate a tile position for the sprite
+
 VIC_SPRITE_X_COORD              = $d000
 VIC_SPRITE_Y_COORD              = $d001
 VIC_SPRITE_X_EXTEND             = $d010
@@ -74,6 +81,8 @@ VARIABLE2                       = $04
 VARIABLE3                       = $05
 VARIABLE4                       = $06
 VARIABLE5                       = $07
+VARIABLE6                       = $08
+VARIABLE7                       = $09
 
 ZEROPAGE_POINTER_1              = $17
 ZEROPAGE_POINTER_2              = $19
@@ -220,16 +229,52 @@ ANIMATION_PLAYER_DANCE			= 10
 		;jsr TEST_Chars
 		;jsr TEST_DrawTile
 		
+        ;==========================
+        ;Prepare the background
+        ;==========================
+
 		;setup for testing purposes - should be screen specific later
 		lda #BROWN
 		sta VIC_BGCOLOR_1
 		lda #MIDDLE_GREY
 		sta VIC_BGCOLOR_2
-		
-		
+
 		ldx #$00							;LEVEL index
 		jsr LEVEL_LoadData
 		jsr LEVEL_DrawScreen
+
+        ;==========================
+        ;Prepare the sprite
+        ;==========================
+
+        ldx #$ff
+        stx VIC_SPRITE_MULTICOLOR_REGISTER
+
+        ldx #$01
+        stx VIC_SPRITE_ENABLE_REGISTER
+
+        ldx #LIGHT_GREY
+        stx VIC_SPRITE_COLOR_BASE
+
+        ldx #ORANGE
+        stx VIC_SPRITE_COLOR_1
+
+        ldx #YELLOW
+        stx VIC_SPRITE_COLOR_2
+
+        ldx #$40
+        stx SPRITE_POINTER_BASE
+
+        ;TEST TILE COORDS
+        ldx #$07
+        stx VARIABLE1
+        ldx #$03
+        stx VARIABLE2
+
+
+        ldx #$00                    ;sprite index
+        jsr LOGIC_PlaceSpriteInTile
+
 		
 ;====================================================================
 ;	MAIN GAME LOOP
@@ -237,11 +282,17 @@ ANIMATION_PLAYER_DANCE			= 10
 		
 !zone GameLoop
 GameLoop
-		jsr TEST_FrameTimer					;flash border
+		;jsr TEST_FrameTimer					;flash border
 
         jsr TEST_LevelSwitch                ;checks button, changes screen data on press
+
+        jsr INPUT_GetPlayerInput            ;reads joystick and keyboard
+
+        jsr INPUT_ParseInput                ;handles input
+
+        jsr LOGIC_UpdateSpritePositions
 		
-		jsr WaitFrame						;wait until frame is finished
+		jsr SYSTEM_WaitFrame    			;wait until frame is finished
 		
 		jmp GameLoop
 		
@@ -255,8 +306,8 @@ GameLoop
 ;waits until a frame has been drawn before moving on
 ;==========================
 
-!zone WaitFrame
-WaitFrame
+!zone SYSTEM_WaitFrame
+SYSTEM_WaitFrame
 		lda VIC_RASTER_REGISTER				;($d012)
 		cmp #$ff
 		beq .WaitStep2
@@ -436,8 +487,8 @@ LEVEL_LoadData
 		lda (ZEROPAGE_POINTER_2),y
 		sta (ZEROPAGE_POINTER_5),y			;copy palette data
 		
-		;lda (ZEROPAGE_POINTER_3),y
-		;sta (ZEROPAGE_POINTER_6),y			;copy attribute data
+		lda (ZEROPAGE_POINTER_3),y
+		sta (ZEROPAGE_POINTER_6),y			;copy attribute data
 		
 		iny
 		cpy #$dc							;220 in decimal, number of tiles
@@ -559,7 +610,358 @@ LEVEL_DrawTile
 		sta (ZEROPAGE_POINTER_2),y
 
 		rts
-		
+
+  
+;=========================================================================
+;   INPUT FUNCTIONS
+;=========================================================================
+
+;======================
+;INPUT_GetInput
+;reads joystick and relevent keyboard buttons
+;do joystick first, reset CIA reg after keyboard read
+;======================
+!zone INPUT_GetInput
+INPUT_GetPlayerInput
+
+.ReadJoystick
+        lda JOYSTICK_2
+        cmp PLAYER_JOYSTICK_STATUS
+        beq .ReadKeyboard
+
+        sta PLAYER_JOYSTICK_STATUS
+        lda #$01
+        sta PLAYER_CHANGE_ACTION_FLAG
+
+.ReadKeyboard
+        ;This will set flags to be parsed later TODO
+
+.GetInputFinished
+        rts
+
+;======================
+;INPUT_ParseInput
+;handles instructions from the player
+;======================
+
+!zone INPUT_ParseInput
+INPUT_ParseInput
+        lda PLAYER_CHANGE_ACTION_FLAG
+        cmp #$00
+        beq .JoystickStatusNotChanged
+
+.ReadJoystick
+        eor #$0f
+        and #$0f                        ;check for change in direction
+        bne .CheckDirections
+
+        lda PLAYER_CURRENT_DIRECTION
+        cmp #DIRECTION_UP
+        bne .NotUp
+
+        lda #ACTION_PLAYER_STAND_UP
+        sta PLAYER_NEXT_ACTION
+        jmp .CheckButton
+
+.NotUp
+        cmp #DIRECTION_DOWN
+        bne .NotDown
+
+        lda #ACTION_PLAYER_STAND_DOWN
+        sta PLAYER_NEXT_ACTION
+        jmp .CheckButton
+
+.NotDown
+        cmp #DIRECTION_LEFT
+        bne .NotLeft
+
+        lda #ACTION_PLAYER_STAND_LEFT
+        jmp .CheckButton
+
+.NotLeft
+        lda #ACTION_PLAYER_STAND_RIGHT
+        sta PLAYER_NEXT_ACTION
+        jmp .CheckButton
+
+.CheckDirections
+        lda #$01
+        bit PLAYER_JOYSTICK_STATUS
+        bne .UpNotPressed
+
+        jsr LOGIC_PlayerMoveUp
+        jmp .CheckButton
+
+.UpNotPressed
+        lda #$02
+        bit PLAYER_JOYSTICK_STATUS
+        bne .DownNotPressed
+
+        jsr LOGIC_PlayerMoveDown
+        jmp .CheckButton
+
+.DownNotPressed
+        lda #$04
+        bit PLAYER_JOYSTICK_STATUS
+        bne .LeftNotPressed
+
+        jsr LOGIC_PlayerMoveLeft
+        jmp .CheckButton
+
+.LeftNotPressed
+        lda #$08
+        bit PLAYER_JOYSTICK_STATUS
+        bne .CheckButton
+
+        jsr LOGIC_PlayerMoveRight
+
+.CheckButton
+        lda #$10
+        bit PLAYER_JOYSTICK_STATUS
+        bne .JoystickStatusNotChanged
+
+        jsr LOGIC_PlayerButton        
+
+.JoystickStatusNotChanged
+        rts
+
+;=========================================================================
+;   LOGIC FUNCTIONS
+;=========================================================================
+
+;========================
+;PlayerMovement Functions
+;========================
+!zone LOGIC_PlayerMoveUp
+LOGIC_PlayerMoveUp
+        ldx #DIRECTION_UP
+        stx PLAYER_CURRENT_DIRECTION
+
+        ldx #$00                    ;current sprite index, will have to be priority sorted by height when more sprites added
+        jsr LOGIC_MoveSpriteUp
+        rts
+
+!zone LOGIC_PlayerMoveDown
+LOGIC_PlayerMoveDown
+        ldx #DIRECTION_DOWN
+        stx PLAYER_CURRENT_DIRECTION
+
+        ldx #$00
+        jsr LOGIC_MoveSpriteDown
+        rts
+
+!zone LOGIC_PlayerMoveLeft
+LOGIC_PlayerMoveLeft
+        ldx #DIRECTION_LEFT
+        stx PLAYER_CURRENT_DIRECTION
+
+        ldx #$00
+        jsr LOGIC_MoveSpriteLeft
+        rts
+
+!zone LOGIC_PlayerMoveRight
+LOGIC_PlayerMoveRight
+        ldx #DIRECTION_RIGHT
+        stx PLAYER_CURRENT_DIRECTION
+
+        ldx #$00
+        jsr LOGIC_MoveSpriteRight
+        rts
+
+!zone LOGIC_PlayerButton
+LOGIC_PlayerButton
+        rts
+
+
+;==========================
+;MoveSprite Functions
+;expects x to hold sprite index
+;==========================
+!zone LOGIC_MoveSpriteUp
+LOGIC_MoveSpriteUp
+        dec SPRITE_Y_POSITION,x
+        rts
+
+!zone LOGIC_MoveSpriteDown
+LOGIC_MoveSpriteDown
+        inc SPRITE_Y_POSITION,x
+        rts
+
+!zone LOGIC_MoveSpriteHorizontal
+LOGIC_MoveSpriteLeft
+        dec SPRITE_X_POSITION,x
+        bpl .UpdateDone                 ;screen 'boundary' not crossed (high bit not affected)
+
+        lda BIT_MASK,x
+        eor #$ff
+        and SPRITE_X_EXTEND
+        sta SPRITE_X_EXTEND
+
+        rts
+
+LOGIC_MoveSpriteRight
+        inc SPRITE_X_POSITION,x
+        bne .UpdateDone
+
+        lda BIT_MASK,x
+        ora SPRITE_X_EXTEND
+        sta SPRITE_X_EXTEND
+
+.UpdateDone
+        rts
+
+;============================
+;UpdateSpritePositions
+;moves sprite coord data from memory to their registers
+;============================
+!zone LOGIC_UpdateSpritePositions
+LOGIC_UpdateSpritePositions
+        ldx #$00                ;index
+
+.UpdateLoop
+        txa
+        asl                     ;double the index as X and Y coords are interlaces
+        tay
+
+        lda SPRITE_Y_POSITION,x
+        sta VIC_SPRITE_Y_COORD,y
+
+        lda SPRITE_X_POSITION,x
+        sta VIC_SPRITE_X_COORD,y
+        inx
+        cpx #$08
+        bne .UpdateLoop
+
+        lda SPRITE_X_EXTEND
+        sta VIC_SPRITE_X_EXTEND
+
+        rts
+
+;===============================
+;LOGIC_PlaceSpriteInTile
+;puts a sprite in a tile on the screen
+;expects sprite index in the x register, tile coords in VARIABLE1 and VARIABLE2
+;===============================
+!zone LOGIC_PlaceSpriteInTile
+LOGIC_PlaceSpriteInTile
+
+        stx VARIABLE6                   ;for later
+
+        jsr LOGIC_GetTileCoords
+
+        ldx VARIABLE6
+
+        lda VARIABLE3
+        sta SPRITE_X_POSITION,x
+        lda VARIABLE4
+        sta SPRITE_Y_POSITION,x
+
+        lda VARIABLE5
+        cmp #$00
+        beq .NoSpriteExtend
+
+        lda BIT_MASK,x
+        ora SPRITE_X_EXTEND
+
+        sta SPRITE_X_EXTEND
+
+.NoSpriteExtend
+        rts
+
+;===============================
+;LOGIC_GetTileCoords
+;returns tile coords, x,y of tile in VARIABLE1 and VARIABLE2
+;answer returned in VARIABLE3 and VARIABLE4, overflow set in VARIABLE5
+;===============================
+!zone LOGIC_GetTileCoords
+LOGIC_GetTileCoords
+        ldx #$00
+        stx VARIABLE3
+        stx VARIABLE4
+        stx VARIABLE5
+
+.GetTileYCoord
+        ldx VARIABLE2
+        stx MULTI1
+        ldx #TILE_SIDE              ;16, size of tile
+        stx MULTI2
+        
+        jsr MATHS_Multiply
+        
+        clc
+        lda MULTIL
+        adc #VIC_SCREEN_OFFSET_Y     ;re-adjust coords to take into account the border
+        sta VARIABLE4               ;y coord set
+
+.GetTileXCoord
+        ldx VARIABLE1
+        stx MULTI1
+        ldx #TILE_SIDE
+        stx MULTI2
+
+        jsr MATHS_Multiply
+
+        ldx MULTIH
+        bne .HighByteSet
+
+        clc
+        lda MULTIL
+        adc #VIC_SCREEN_OFFSET_X
+        bcc .TileCoordsFound
+
+        lda #$01
+        sta VARIABLE5
+        jmp .TileCoordsFound
+
+.HighByteSet
+        stx VARIABLE5
+        clc
+        lda MULTIL
+        adc #VIC_SCREEN_OFFSET_X
+
+.TileCoordsFound
+        sta VARIABLE3
+        rts
+
+;=========================================================================
+;   MATHS FUNCTIONS
+;=========================================================================
+
+;======================
+;MATHS_Multiply
+;takes 2 operands and multiplies them together
+;operands given in MULTI1 and MULTI2, result (16-bit) stored in MULTIH and MULTIL
+;preferred to put smaller number in MULTI1
+;======================
+!zone MATHS_Multiply
+MATHS_Multiply
+        ldx #$00
+        stx MULTIL
+        stx MULTIH
+        txa                     ;zero result bytes and accumulator
+
+        ldx MULTI2
+        beq .MultiplyDone
+        ldx MULTI1
+        beq .MultiplyDone       ;if either operand is zero, we are done
+
+        clc                     ;prepare to multiply non-zero operands
+
+.MultiplyLoop
+        adc MULTI2              ;add MULTI2 to itself MULTI1 times
+        bcc .NoOverFlow
+
+        inc MULTIH              ;increment result high byte in case of overflow
+        clc
+
+.NoOverFlow
+        dex
+        bne .MultiplyLoop       ;when x is zero, we are finished
+
+.MultiplyDone
+        sta MULTIL              ;accumulator holds low byte of result, high byte set during operation
+        rts
+
+
 ;=========================================================================
 ;	TEST FUNCTIONS
 ;=========================================================================
@@ -616,8 +1018,6 @@ TEST_Sprites
 
 !zone TEST_DrawTile
 TEST_DrawTile
-
-
 
 		lda #$05
 		sta VARIABLE1					;x coord
@@ -713,8 +1113,33 @@ CURRENT_SCREEN_BG_1
 CURRENT_SCREEN_BG_2
 		!byte $00
 		
-;any extra data that might be needed - such as number and positions of npcs
+;any extra data that might be needed - such as number and positions of npcs and doors
 CURRENT_SCREEN_GENERAL_DATA
+
+;=================================================================
+;   SPRITE PLACEMENT DATA
+;=================================================================
+
+SPRITE_X_EXTEND
+        !byte $00
+
+SPRITE_X_POSITION                                               ;sprite position on screen
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
+
+SPRITE_Y_POSITION
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
+
+SPRITE_TILE_X_POSITION                                          ;tile sprite currently occupies
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
+
+SPRITE_TILE_Y_POSITION
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
+
+SPRITE_TILE_X_DELTA                                             ;how far through a tile the sprite has moved
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
+
+SPRITE_TILE_Y_DELTA
+        !byte $00, $00, $00, $00, $00, $00, $00, $00
 
 ;==========================
 ;	SCREEN DATA - A POINTER LOOKUP TABLE
@@ -746,7 +1171,39 @@ SCREEN_ROW_HIGH_BYTE
         !byte ( ( SCREEN_CHAR_BUFFER + 720 ) & 0xff00 ) >> 8
         !byte ( ( SCREEN_CHAR_BUFFER + 800 ) & 0xff00 ) >> 8
 		
-		
+
+;=========================================================================
+;   PLAYER DATA
+;=========================================================================
+
+PLAYER_POSITION
+        !byte $40, $40                  ;x,y pixel coords
+
+PLAYER_GRID_POSITION
+        !byte $00, $00                  ;x,y tile coords
+
+PLAYER_JOYSTICK_STATUS
+        !byte $00
+
+PLAYER_CURRENT_DIRECTION
+        !byte $00
+
+PLAYER_CURRENT_ACTION
+        !byte $00
+
+PLAYER_NEXT_ACTION
+        !byte $00
+
+PLAYER_CHANGE_ACTION_FLAG
+        !byte $00
+
+;=========================================================================
+;   GENERAL DATA
+;=========================================================================
+
+BIT_MASK
+        !byte $01, $02, $04, $08, $10, $20, $40, $80
+
 ;=========================================================================
 ;	EXTERNAL DATA
 ;=========================================================================
