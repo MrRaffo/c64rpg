@@ -112,6 +112,8 @@ TILE_HALF_SIDE                  = 8
 
 SPRITE_SIZE                     = 16
 SPRITE_HALF_SIZE                = 8
+SPRITE_CLIPPING_DISTANCE_LEFT	= SPRITE_HALF_SIZE - 4
+SPRITE_CLIPPING_DISTANCE_RIGHT  = SPRITE_HALF_SIZE + 4
 
 ;DIRECTION
 DIRECTION_UP					= 1
@@ -266,9 +268,9 @@ ANIMATION_PLAYER_DANCE			= 10
         stx SPRITE_POINTER_BASE
 
         ;TEST TILE COORDS
-        ldx #$07
+        ldx #$06
         stx VARIABLE1
-        ldx #$03
+        ldx #$04
         stx VARIABLE2
 
 
@@ -731,47 +733,233 @@ INPUT_ParseInput
 ;========================
 ;PlayerMovement Functions
 ;========================
+
+;================================================
+;LOGIC_PlayerMoveUp
+;================================================
 !zone LOGIC_PlayerMoveUp
 LOGIC_PlayerMoveUp
         ldx #DIRECTION_UP
         stx PLAYER_CURRENT_DIRECTION
 
-        ldx #$00                    ;current sprite index, will have to be priority sorted by height when more sprites added
-        jsr LOGIC_MoveSpriteUp
+        ldx #$00       ;current sprite index, will have to be priority sorted by height when more sprites added
+        lda SPRITE_TILE_Y_DELTA,x
+		cmp #SPRITE_HALF_SIZE
+		beq .CheckCanMoveUp
+
+.CanMoveUp
+		dec SPRITE_TILE_Y_DELTA,x
+		lda SPRITE_TILE_Y_DELTA,x
+		cmp #$ff
+		bne .NoChangeInTilePosition
+		
+		dec SPRITE_TILE_Y_POSITION,x
+		lda #(TILE_SIDE - 1)
+  		sta SPRITE_TILE_Y_DELTA,x
+				
+.NoChangeInTilePosition
+		jsr LOGIC_MoveSpriteUp
         rts
 
+.CheckCanMoveUp
+		lda SPRITE_TILE_Y_POSITION,x
+		cmp #$00
+		beq .NoMoveAvailable			;TODO this is a special case - change the screen
+		
+		sta MULTI1
+		dec MULTI1						;need data for tile above player
+		lda #LEVEL_TILE_WIDTH
+		sta MULTI2
+		
+		jsr MATHS_Multiply
+		
+		lda MULTIL
+		clc
+		adc SPRITE_TILE_X_POSITION,x	;add position along current row to get correct block
+										;shouldn't be any overflow as all results are < 220
+		tay
+		lda CURRENT_SCREEN_ATTRIBUTE_DATA,y
+		and #$01						;check if low bit is set		
+		beq .CanMoveUp			;if so, we can't move
+		
+										;we now have to check for blocks to the above right and
+										;above left of the sprite to avoid clipping problems
+										
+		;lda SPRITE_TILE_X_DELTA,x
+		
+
+.NoMoveAvailable		
+		rts								;if we can't move up, don't, and return to program
+		
+		
+;================================================
+;LOGIC_PlayerMoveDown
+;================================================
 !zone LOGIC_PlayerMoveDown
 LOGIC_PlayerMoveDown
         ldx #DIRECTION_DOWN
         stx PLAYER_CURRENT_DIRECTION
 
         ldx #$00
-        jsr LOGIC_MoveSpriteDown
-        rts
+		lda SPRITE_TILE_Y_DELTA,x
+		cmp #(SPRITE_SIZE - 1)
+		beq .CheckCanMoveDown
+		
+.CanMoveDown
+		inc SPRITE_TILE_Y_DELTA,x
+		lda SPRITE_TILE_Y_DELTA,x
+		cmp #$10						;16, check if we've crossed the tile boundary
+		bne .NoChangeInTilePosition
+		
+		inc SPRITE_TILE_Y_POSITION,x
+		lda #$00
+		sta SPRITE_TILE_Y_DELTA,x
+		
+.NoChangeInTilePosition
+		jsr LOGIC_MoveSpriteDown
+		rts
+		
+.CheckCanMoveDown
+		lda SPRITE_TILE_Y_POSITION,x
+		cmp #$14
+		beq .NoMoveAvailable
+		
+		sta MULTI1
+		inc MULTI1						;get coords of tile below sprite
+		lda #LEVEL_TILE_WIDTH
+		sta MULTI2
+		
+		jsr MATHS_Multiply
+		
+		lda MULTIL
+		clc
+		adc SPRITE_TILE_X_POSITION,x
+		
+		tay
+		lda CURRENT_SCREEN_ATTRIBUTE_DATA,y
+		and #$01
+		beq .CanMoveDown
+		
+.NoMoveAvailable
+		rts
 
+		
+;================================================
+;LOGIC_PlayerMoveLeft
+;================================================
 !zone LOGIC_PlayerMoveLeft
 LOGIC_PlayerMoveLeft
         ldx #DIRECTION_LEFT
         stx PLAYER_CURRENT_DIRECTION
 
-        ldx #$00
+		ldx #$00
+		lda SPRITE_TILE_X_DELTA,x
+		cmp #SPRITE_CLIPPING_DISTANCE_LEFT
+		beq .CheckCanMoveLeft
+		
+.CanMoveLeft
+		dec SPRITE_TILE_X_DELTA,x
+		lda SPRITE_TILE_X_DELTA,x
+		cmp #$ff						;check for underflow
+		bne .NoChangeInTilePosition
+		
+		dec SPRITE_TILE_X_POSITION,x
+		lda #(TILE_SIDE - 1)
+		sta SPRITE_TILE_X_DELTA,x
+		
+.NoChangeInTilePosition
         jsr LOGIC_MoveSpriteLeft
         rts
 
+.CheckCanMoveLeft
+		lda SPRITE_TILE_X_POSITION,x
+		cmp #$00
+		beq .NoMoveAvailable				;at the edge of the screen
+
+		lda SPRITE_TILE_Y_POSITION,x
+		sta MULTI1
+		lda #LEVEL_TILE_WIDTH
+		sta MULTI2
+		
+		jsr MATHS_Multiply
+		
+		lda MULTIL
+		clc
+		adc SPRITE_TILE_X_POSITION,x
+		
+		tay
+		dey									;get block to the left of the player
+		
+		lda CURRENT_SCREEN_ATTRIBUTE_DATA,y
+		and #$01
+		beq .CanMoveLeft
+		
+.NoMoveAvailable
+		rts
+		
+		
+;================================================
+;LOGIC_PlayerMoveRight
+;================================================
 !zone LOGIC_PlayerMoveRight
 LOGIC_PlayerMoveRight
         ldx #DIRECTION_RIGHT
         stx PLAYER_CURRENT_DIRECTION
 
         ldx #$00
+		lda SPRITE_TILE_X_DELTA,x
+		cmp #SPRITE_HALF_SIZE
+		beq .CheckCanMoveRight
+		
+.CanMoveRight
+		inc SPRITE_TILE_X_DELTA,x
+		lda SPRITE_TILE_X_DELTA,x
+		cmp #$10
+		bne .NoChangeInTilePosition
+		
+		inc SPRITE_TILE_X_POSITION,x
+		lda #$00
+		sta SPRITE_TILE_X_DELTA,x
+		
+.NoChangeInTilePosition
         jsr LOGIC_MoveSpriteRight
         rts
 
+.CheckCanMoveRight
+		lda SPRITE_TILE_X_POSITION,x
+		cmp #LEVEL_TILE_WIDTH
+		beq .NoMoveAvailable
+		
+		lda SPRITE_TILE_Y_POSITION,x
+		sta MULTI1
+		lda #LEVEL_TILE_WIDTH
+		sta MULTI2
+		
+		jsr MATHS_Multiply
+		
+		lda MULTIL
+		clc
+		adc SPRITE_TILE_X_POSITION,x
+		
+		tay
+		iny 							;get tile to right of player
+		
+		lda CURRENT_SCREEN_ATTRIBUTE_DATA,y
+		and #$01
+		beq .CanMoveRight
+		
+.NoMoveAvailable
+		rts
+		
+;================================================
+;LOGIC_PlayerButton
+;================================================
 !zone LOGIC_PlayerButton
 LOGIC_PlayerButton
         rts
 
 
+		
 ;==========================
 ;MoveSprite Functions
 ;expects x to hold sprite index
@@ -844,7 +1032,11 @@ LOGIC_UpdateSpritePositions
 !zone LOGIC_PlaceSpriteInTile
 LOGIC_PlaceSpriteInTile
 
-        stx VARIABLE6                   ;for later
+        stx VARIABLE6                   ;for later, sprite index
+		lda VARIABLE1
+		sta SPRITE_TILE_X_POSITION,x
+		lda VARIABLE2
+		sta SPRITE_TILE_Y_POSITION,x
 
         jsr LOGIC_GetTileCoords
 
@@ -855,16 +1047,27 @@ LOGIC_PlaceSpriteInTile
         lda VARIABLE4
         sta SPRITE_Y_POSITION,x
 
+		lda #SPRITE_HALF_SIZE			;													 _____
+		sta SPRITE_TILE_X_DELTA,x		;put sprite in the centre of the tile				|     |
+		lda #(SPRITE_SIZE - 1)			;												    |     |
+		sta SPRITE_TILE_Y_DELTA,x		;sprite position centre of bottom row of pixels ->  |__.__| 
+		
         lda VARIABLE5
         cmp #$00
         beq .NoSpriteExtend
 
-        lda BIT_MASK,x
+        lda BIT_MASK,x					;set sprite extend bit
         ora SPRITE_X_EXTEND
-
         sta SPRITE_X_EXTEND
+		jmp .PositionDone
 
-.NoSpriteExtend
+.NoSpriteExtend							;or else make sure extend bit is not set
+		lda BIT_MASK,x
+		eor #$ff
+		and SPRITE_X_EXTEND
+		sta SPRITE_X_EXTEND
+		
+.PositionDone
         rts
 
 ;===============================
@@ -1128,7 +1331,7 @@ SPRITE_X_POSITION                                               ;sprite position
 
 SPRITE_Y_POSITION
         !byte $00, $00, $00, $00, $00, $00, $00, $00
-
+* = $3000
 SPRITE_TILE_X_POSITION                                          ;tile sprite currently occupies
         !byte $00, $00, $00, $00, $00, $00, $00, $00
 
@@ -1239,9 +1442,3 @@ DATA_LEVEL_0
 
 DATA_LEVEL_1
         !binary "levels/level1.lvl"
-
-;TEST_TILE_DATA
-		;!binary "levels/screen1.scn"
-		
-;TEST_PALETTE_DATA
-;		!binary "levels/TESTpalette"
