@@ -11,7 +11,9 @@
 ;       new level structure and level loading, per-tile coloring and per-tile attribute flags
 ;       basic joystick reading
 ;       sprite movement, but no sprite animation
-;	added clipping with background for player sprite
+;		added clipping with background for player sprite
+
+;ver 7: re-introduced animations
 
 ;================================================
 ;CONSTANTS
@@ -280,6 +282,13 @@ ANIMATION_PLAYER_DANCE			= 10
         ldx #$00                    ;sprite index
         jsr LOGIC_PlaceSpriteInTile
 
+		;=========================
+		;Prepare animation for testing
+		;=========================
+		
+		ldx #DIRECTION_DOWN
+		stx SPRITE_CURRENT_DIRECTION
+	
 		
 ;====================================================================
 ;	MAIN GAME LOOP
@@ -291,11 +300,13 @@ GameLoop
 
         jsr TEST_LevelSwitch                ;checks button, changes screen data on press
 
-        jsr INPUT_GetPlayerInput            ;reads joystick and keyboard
-
-        jsr INPUT_ParseInput                ;handles input
-
-        jsr LOGIC_UpdateSpritePositions
+		jsr SYSTEM_HandleInput
+		
+		jsr SYSTEM_HandleLogic
+		
+		jsr SYSTEM_HandleAnimation
+		
+		jsr LOGIC_UpdateSpriteAction
 		
 		jsr SYSTEM_WaitFrame    			;wait until frame is finished
 		
@@ -304,6 +315,36 @@ GameLoop
 ;====================================================================
 ;	SYSTEM FUNCTIONS
 ;====================================================================
+
+;==========================
+;SYSTEM_HandleInput
+;==========================
+!zone SYSTEM_HandleInput
+SYSTEM_HandleInput
+		jsr INPUT_GetPlayerInput
+		jsr INPUT_ParseInput
+		rts
+
+;==========================
+;SYSTEM_HandleLogic
+;==========================
+!zone SYSTEM_HandleLogic
+SYSTEM_HandleLogic
+		jsr LOGIC_UpdateSpritePositions
+		rts
+		
+;==========================
+;SYSTEM_HandleAnimation
+;==========================
+!zone SYSTEM_HandleAnimation
+SYSTEM_HandleAnimation
+		jsr LOGIC_UpdateAnimation
+		jsr LOGIC_UpdateSpriteAnimationData
+		rts
+
+
+;==========================
+;SYSTEM_HandleAction
 
 ;==========================
 ;WaitFrame
@@ -635,8 +676,7 @@ INPUT_GetPlayerInput
         beq .ReadKeyboard
 
         sta PLAYER_JOYSTICK_STATUS
-        lda #$01
-        sta PLAYER_CHANGE_ACTION_FLAG
+
 
 .ReadKeyboard
         ;This will set flags to be parsed later TODO
@@ -651,21 +691,18 @@ INPUT_GetPlayerInput
 
 !zone INPUT_ParseInput
 INPUT_ParseInput
-        lda PLAYER_CHANGE_ACTION_FLAG
-        cmp #$00
-        beq .JoystickStatusNotChanged
 
 .ReadJoystick
         eor #$0f
         and #$0f                        ;check for change in direction
         bne .CheckDirections
 
-        lda PLAYER_CURRENT_DIRECTION
+        lda SPRITE_CURRENT_DIRECTION
         cmp #DIRECTION_UP
         bne .NotUp
 
         lda #ACTION_PLAYER_STAND_UP
-        sta PLAYER_NEXT_ACTION
+        sta SPRITE_NEXT_ACTION
         jmp .CheckButton
 
 .NotUp
@@ -673,7 +710,7 @@ INPUT_ParseInput
         bne .NotDown
 
         lda #ACTION_PLAYER_STAND_DOWN
-        sta PLAYER_NEXT_ACTION
+        sta SPRITE_NEXT_ACTION
         jmp .CheckButton
 
 .NotDown
@@ -681,11 +718,12 @@ INPUT_ParseInput
         bne .NotLeft
 
         lda #ACTION_PLAYER_STAND_LEFT
+		sta SPRITE_NEXT_ACTION
         jmp .CheckButton
 
 .NotLeft
         lda #ACTION_PLAYER_STAND_RIGHT
-        sta PLAYER_NEXT_ACTION
+        sta SPRITE_NEXT_ACTION
         jmp .CheckButton
 
 .CheckDirections
@@ -743,7 +781,9 @@ INPUT_ParseInput
 !zone LOGIC_PlayerMoveUp
 LOGIC_PlayerMoveUp
         ldx #DIRECTION_UP
-        stx PLAYER_CURRENT_DIRECTION
+        stx SPRITE_CURRENT_DIRECTION
+		ldx #ANIMATION_PLAYER_WALK_UP
+		stx SPRITE_NEXT_ACTION
 
         ldx #$00       ;current sprite index, will have to be priority sorted by height when more sprites added
         lda SPRITE_TILE_Y_DELTA,x
@@ -825,7 +865,9 @@ LOGIC_PlayerMoveUp
 !zone LOGIC_PlayerMoveDown
 LOGIC_PlayerMoveDown
         ldx #DIRECTION_DOWN
-        stx PLAYER_CURRENT_DIRECTION
+        stx SPRITE_CURRENT_DIRECTION
+		ldx #ANIMATION_PLAYER_WALK_DOWN
+		stx SPRITE_NEXT_ACTION
 
         ldx #$00
 		lda SPRITE_TILE_Y_DELTA,x
@@ -903,7 +945,9 @@ LOGIC_PlayerMoveDown
 !zone LOGIC_PlayerMoveLeft
 LOGIC_PlayerMoveLeft
         ldx #DIRECTION_LEFT
-        stx PLAYER_CURRENT_DIRECTION
+        stx SPRITE_CURRENT_DIRECTION
+		ldx #ANIMATION_PLAYER_WALK_LEFT
+		stx SPRITE_NEXT_ACTION
 
 		ldx #$00
 		lda SPRITE_TILE_X_DELTA,x
@@ -971,7 +1015,9 @@ LOGIC_PlayerMoveLeft
 !zone LOGIC_PlayerMoveRight
 LOGIC_PlayerMoveRight
         ldx #DIRECTION_RIGHT
-        stx PLAYER_CURRENT_DIRECTION
+        stx SPRITE_CURRENT_DIRECTION
+		ldx #ANIMATION_PLAYER_WALK_RIGHT
+		stx SPRITE_NEXT_ACTION
 
         ldx #$00
 		lda SPRITE_TILE_X_DELTA,x
@@ -1037,7 +1083,11 @@ LOGIC_PlayerMoveRight
 ;================================================
 !zone LOGIC_PlayerButton
 LOGIC_PlayerButton
-        rts
+        lda #ANIMATION_PLAYER_DANCE
+		sta VARIABLE1
+		ldx #$00
+		jsr LOGIC_ChangeAnimation
+		rts
 
 
 		
@@ -1206,6 +1256,134 @@ LOGIC_GetTileCoords
         sta VARIABLE3
         rts
 
+;=================================
+;	ANIMATION AND ACTIONS
+;=================================
+
+;==========================
+;LOGIC_UpdateAnimation
+;loops through sprites, making necessary updates
+;==========================
+!zone LOGIC_UpdateAnimation
+LOGIC_UpdateAnimation
+		ldx #$00
+		
+.CheckForChange
+		lda SPRITE_NEXT_ACTION,x
+		cmp SPRITE_CURRENT_ACTION,x
+		beq .UpdateLoop
+		
+		sta VARIABLE1
+		jsr LOGIC_ChangeAnimation
+		
+.UpdateLoop
+		jsr LOGIC_UpdateCurrentFrame
+		inx
+		cpx #$08
+		bne .CheckForChange
+		rts
+
+;==========================
+;LOGIC_UpdateCurrentFrame
+;x is the sprite index
+;==========================
+!zone LOGIC_UpdateCurrentFrame
+LOGIC_UpdateCurrentFrame
+		dec SPRITE_ANIMATION_TIMER,x
+		bne .NoUpdateNeededYet				;check if enough time has passed to update frame
+		
+		lda SPRITE_ANIMATION_CYCLE,x
+		asl
+		tay									;double to get correct address of animation pointer
+		
+		lda ANIMATION_LIST,y
+		sta ZEROPAGE_POINTER_1
+		lda ANIMATION_LIST + 1,y
+		sta ZEROPAGE_POINTER_1 + 1			;get pointer to the current animation
+		
+		ldy #$00
+		
+		lda (ZEROPAGE_POINTER_1),y			;this is the timer for the animation
+		sta SPRITE_ANIMATION_TIMER,x
+		inc SPRITE_FRAME_INDEX,x
+		ldy SPRITE_FRAME_INDEX,x
+		
+		lda (ZEROPAGE_POINTER_1),y			;get index of next frame in sequence
+		bne .NoRestartNeeded				;a value of 0 indicates end of animation
+		
+		ldy #$01							;frame 1 has offset of 1, as timer is at 0
+		lda (ZEROPAGE_POINTER_1),y
+		tay
+		lda #$01
+		sta SPRITE_FRAME_INDEX,x
+		tya
+		
+.NoRestartNeeded
+		sta SPRITE_CURRENT_ANIMATION_FRAME,x
+		
+.NoUpdateNeededYet
+		rts
+		
+;===========================
+;LOGIC_ChangeAnimation
+;expects x as sprite index, VARIABLE1 as new animation
+;===========================
+!zone LOGIC_ChangeAnimation
+LOGIC_ChangeAnimation
+		lda VARIABLE1
+		sta SPRITE_ANIMATION_CYCLE,x
+		
+		asl
+		tay
+		lda ANIMATION_LIST,y
+		sta ZEROPAGE_POINTER_1
+		lda ANIMATION_LIST + 1,y
+		sta ZEROPAGE_POINTER_1 + 1
+		
+		ldy #$00
+		lda (ZEROPAGE_POINTER_1),y
+		sta SPRITE_ANIMATION_TIMER,x
+		
+		iny
+		lda (ZEROPAGE_POINTER_1),y
+		sta SPRITE_CURRENT_ANIMATION_FRAME,x
+		
+		lda #$01
+		sta SPRITE_FRAME_INDEX,x
+		
+		rts
+		
+;===========================
+;LOGIC_UpdateSpriteAnimationData
+;moves sprite data to vic registers
+;===========================
+!zone LOGIC_UpdateSpriteAnimationData
+LOGIC_UpdateSpriteAnimationData
+		ldx #$00
+.CopyLoop
+		lda SPRITE_CURRENT_ANIMATION_FRAME,x
+		sta SPRITE_POINTER_BASE,x
+		inx
+		cpx #$08
+		bne .CopyLoop
+		
+		rts
+		
+;============================
+;LOGIC_UpdateSpriteAction
+;============================
+!zone LOGIC_UpdateSpriteAction
+LOGIC_UpdateSpriteAction
+		ldx #$00
+.UpdateLoop
+		lda SPRITE_NEXT_ACTION,x
+		sta SPRITE_CURRENT_ACTION,x
+		inx
+		cpx #$08
+		bne .UpdateLoop
+		
+		rts
+		
 ;=========================================================================
 ;   MATHS FUNCTIONS
 ;=========================================================================
@@ -1412,7 +1590,7 @@ SPRITE_X_POSITION                                               ;sprite position
 
 SPRITE_Y_POSITION
         !byte $00, $00, $00, $00, $00, $00, $00, $00
-* = $3000
+
 SPRITE_TILE_X_POSITION                                          ;tile sprite currently occupies
         !byte $00, $00, $00, $00, $00, $00, $00, $00
 
@@ -1424,6 +1602,34 @@ SPRITE_TILE_X_DELTA                                             ;how far through
 
 SPRITE_TILE_Y_DELTA
         !byte $00, $00, $00, $00, $00, $00, $00, $00
+		
+;=================================================================
+;   SPRITE ACTION DATA
+;=================================================================
+
+SPRITE_PRIORITY
+		!byte $00, $00, $00, $00, $00, $00, $00, $00			;lower sprites should show over higher
+
+SPRITE_CURRENT_ACTION											;what the sprite is currently up to
+		!byte $00, $00, $00, $00, $00, $00, $00, $00
+		
+SPRITE_CURRENT_DIRECTION
+		!byte $00, $00, $00, $00, $00, $00, $00, $00
+		
+SPRITE_NEXT_ACTION												;next action for sprite
+		!byte $00, $00, $00, $00, $00, $00, $00, $00
+		
+SPRITE_CURRENT_ANIMATION_FRAME									;what the sprite should display
+		!byte $00, $00, $00, $00, $00, $00, $00, $00
+		
+SPRITE_FRAME_INDEX												;how far into an animation sprite is
+		!byte $00, $00, $00, $00, $00, $00, $00, $00
+		
+SPRITE_ANIMATION_TIMER											;how quickly an animation should play
+		!byte $00, $00, $00, $00, $00, $00, $00, $00
+			
+SPRITE_ANIMATION_CYCLE											;current animation that should be playing
+		!byte $00, $00, $00, $00, $00, $00, $00, $00
 
 ;==========================
 ;	SCREEN DATA - A POINTER LOOKUP TABLE
@@ -1460,26 +1666,9 @@ SCREEN_ROW_HIGH_BYTE
 ;   PLAYER DATA
 ;=========================================================================
 
-PLAYER_POSITION
-        !byte $40, $40                  ;x,y pixel coords
-
-PLAYER_GRID_POSITION
-        !byte $00, $00                  ;x,y tile coords
-
 PLAYER_JOYSTICK_STATUS
         !byte $00
 
-PLAYER_CURRENT_DIRECTION
-        !byte $00
-
-PLAYER_CURRENT_ACTION
-        !byte $00
-
-PLAYER_NEXT_ACTION
-        !byte $00
-
-PLAYER_CHANGE_ACTION_FLAG
-        !byte $00
 
 ;=========================================================================
 ;   GENERAL DATA
@@ -1487,17 +1676,68 @@ PLAYER_CHANGE_ACTION_FLAG
 
 BIT_MASK
         !byte $01, $02, $04, $08, $10, $20, $40, $80
+	
 
-;=========================================================================
-;	EXTERNAL DATA
-;=========================================================================
+;==================================================================
+;	ANIMATION DATA
+;==================================================================
 
-CHARSET_DATA
-		!binary "graphics/rpgset1.chr"
+;=============================
+;	ANIMATIONS
+;=============================
 
-SPRITE_DATA
-		!binary "graphics/sprites.spr"
+ANIMATION_LIST
+		!word 0x0000						;null pointer
+		!word ANIM_PLAYER_STAND_UP
+		!word ANIM_PLAYER_STAND_DOWN
+		!word ANIM_PLAYER_STAND_LEFT
+		!word ANIM_PLAYER_STAND_RIGHT
+		!word ANIM_PLAYER_WALK_UP
+		!word ANIM_PLAYER_WALK_DOWN
+		!word ANIM_PLAYER_WALK_LEFT
+		!word ANIM_PLAYER_WALK_RIGHT
+		!word ANIM_PLAYER_TALK
+		!word ANIM_PLAYER_DANCE
+
+ANIM_PLAYER_STAND_UP
+		!byte $08
+		!byte $4b, $00						;one frame for standing
+
+ANIM_PLAYER_STAND_DOWN
+		!byte $08
+		!byte $40, $00
 		
+ANIM_PLAYER_STAND_LEFT
+		!byte $08
+		!byte $49, $00
+		
+ANIM_PLAYER_STAND_RIGHT
+		!byte $08
+		!byte $46, $00
+		
+ANIM_PLAYER_WALK_UP
+		!byte $06
+		!byte $4c, $4b, $4d, $4b, $00
+		
+ANIM_PLAYER_WALK_DOWN
+		!byte $03
+		!byte $41, $42, $41, $40, $43, $44, $43, $40, $00
+		
+ANIM_PLAYER_WALK_LEFT
+		!byte $08
+		!byte $48, $49, $4a, $49, $00
+		
+ANIM_PLAYER_WALK_RIGHT
+		!byte $08
+		!byte $45, $46, $47, $46, $00
+		
+ANIM_PLAYER_TALK
+		!byte $06
+		!byte $4d, $4e, $00
+		
+ANIM_PLAYER_DANCE
+		!byte $0a							;Timer
+		!byte $50, $51, $52, $51, $00 		;Frame List
 		
 ;======================
 ;	LEVEL DATA
@@ -1523,3 +1763,13 @@ DATA_LEVEL_0
 
 DATA_LEVEL_1
         !binary "levels/level1.lvl"
+		
+;=========================================================================
+;	EXTERNAL DATA
+;=========================================================================
+
+CHARSET_DATA
+		!binary "graphics/rpgset1.chr"
+
+SPRITE_DATA
+		!binary "graphics/sprites.spr"
