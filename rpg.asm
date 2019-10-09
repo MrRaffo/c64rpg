@@ -4,6 +4,9 @@
 ;ver 2: added simple joystick controls for player sprite
 ;ver 3: added ability to draw a tile to any coord on screen, with colour data
 ;		added level drawing routine and test screen data
+;ver 4: added animations and basic keyboard reading - pressing 1 or 2 will choose a different animation for player sprite
+
+		;TODO - add a routine to deal with changes in the players current action
 
 ;=============================================================
 ;CONSTANTS
@@ -82,7 +85,7 @@ ZEROPAGE_POINTER_2              = $19
 ZEROPAGE_POINTER_3              = $1b
 ZEROPAGE_POINTER_4              = $1d
 
-NUMBER_OF_SPRITES               = $05
+NUMBER_OF_SPRITES               = $20
 SPRITE_BASE                     = $40               ;64 in decimal
 SPRITE_END                      = SPRITE_BASE + NUMBER_OF_SPRITES
 SPRITE_POINTER_BASE             = SCREEN_CHAR_BUFFER + $3f8     ;1016 bytes after screen buffer
@@ -97,6 +100,22 @@ TILE_HALF_SIDE                  = 8
 
 SPRITE_SIZE                     = 16
 SPRITE_HALF_SIZE                = 8
+
+;PLAYER ACTIONS
+PLAYER_ACTION_STANDING			= $1
+PLAYER_ACTION_WALKING			= $2
+PLAYER_ACTION_TALKING			= $3
+PLAYER_ACTION_DANCING			= $4
+
+;ANIMATION INDICES
+ANIMATION_PLAYER_STAND_UP		= 1
+ANIMATION_PLAYER_STAND_LEFT		= 2
+ANIMATION_PLAYER_STAND_RIGHT	= 3
+ANIMATION_PLAYER_WALK_UP		= 4
+ANIMATION_PLAYER_WALK_LEFT		= 5
+ANIMATION_PLAYER_WALK_RIGHT		= 6
+ANIMATION_PLAYER_TALK			= 7
+ANIMATION_PLAYER_DANCE			= 8
 
 ;=============================================================
 ;   INITIALIZATION
@@ -195,7 +214,7 @@ SPRITE_HALF_SIZE                = 8
         lda #YELLOW
         sta VIC_SPRITE_COLOR_2
 
-        lda #GREEN
+        lda #LIGHT_GREY
         sta VIC_SPRITE_COLOR_BASE
 
 ;==================================
@@ -211,6 +230,11 @@ SPRITE_HALF_SIZE                = 8
 
         lda #MIDDLE_GREY
         sta VIC_BGCOLOR_2
+		
+		lda #ANIMATION_PLAYER_STAND_RIGHT
+		sta VARIABLE1
+		ldx #$00
+		jsr ChangeAnimation
 
 		ldx #<SCREEN_1_DATA
 		stx ZEROPAGE_POINTER_1
@@ -220,7 +244,7 @@ SPRITE_HALF_SIZE                = 8
 		jsr CopyScreenData
         jsr DrawScreen
 		
-TEST_Charset
+TEST_Charset							;print alphabet under play area
 		ldx #$00
 		ldy #$e0
 		
@@ -250,9 +274,15 @@ GameLoop
         ;inc VIC_BORDER_COLOR           ;flash the border
 
         jsr ReadJoystick
+		
+		jsr ReadKeyboard
 
         jsr UpdateSpritePositions      ;moves sprite software stored positions to hardware position registers, deals with extended X bit
 
+		jsr UpdateAnimations
+		
+		jsr CopySpriteFrameData
+		
         jsr WaitFrame
 
         jmp GameLoop
@@ -387,6 +417,28 @@ WaitFrame
 
         rts
 
+;==========================
+;ReadKeyboard
+;==========================
+
+!zone ReadKeyboard
+ReadKeyboard
+		lda #%01111111
+		sta $dc00			;select row of keyboard matrix
+		lda $dc01
+		cmp #%11111110		;check for '1' key pressed
+		bne .OneKeyNotPressed
+		
+		jsr OneKeyPressed
+
+.OneKeyNotPressed		
+		cmp #%11110111		;check for '2' key pressed
+		bne .NoKeyPressed
+		
+		jsr TwoKeyPressed
+		
+.NoKeyPressed
+		rts
 
 ;==================================================================
 ;       CONTROL AND MOVEMENT FUNCTIONS
@@ -429,6 +481,8 @@ ReadJoystick
         jsr PlayerButton
 
 .ButtonNotPressed
+		lda JOYSTICK_2
+		sta JOYSTICK_STATUS
         rts
 
 ;===============================
@@ -437,6 +491,20 @@ ReadJoystick
 ;===============================
 !zone PlayerMoveUp
 PlayerMoveUp
+
+		lda JOYSTICK_STATUS
+		bit BIT_MASK
+		bne .NoChangeInDirection			;check if this is a new direction
+
+		ldx #PLAYER_ACTION_WALKING			;if not, change the character status
+		jsr ChangePlayerAction
+		
+		lda PLAYER_DIRECTION_FACING
+		ora BIT_MASK + 0				;UP
+		and BIT_MASK_INVERSE + 1		;remove 'DOWN' bit
+		sta PLAYER_DIRECTION_FACING
+
+.NoChangeInDirection		
         ldx #$00
         jsr MoveSpriteUp
         rts
@@ -444,18 +512,45 @@ PlayerMoveUp
 !zone PlayerMoveDown
 PlayerMoveDown
 
-        ldx #$00
+		lda JOYSTICK_STATUS
+		bit BIT_MASK + 1
+		bne .NoChangeInDirection
+
+		ldx #PLAYER_ACTION_WALKING
+		jsr ChangePlayerAction
+		
+		lda PLAYER_DIRECTION_FACING
+		ora BIT_MASK + 1				;DOWN
+		and BIT_MASK_INVERSE + 0		;remove 'UP' bit
+		sta PLAYER_DIRECTION_FACING
+		
+.NoChangeInDirection
+		ldx #$00
         jsr MoveSpriteDown
         rts
 
 !zone PlayerMoveLeft
 PlayerMoveLeft
+		ldx #PLAYER_ACTION_WALKING
+		stx PLAYER_CURRENT_ACTION
+		
+		lda PLAYER_DIRECTION_FACING
+		ora BIT_MASK + 2		;LEFT
+		sta PLAYER_DIRECTION_FACING
+
         ldx #$00
         jsr MoveSpriteLeft
         rts
 
 !zone PlayerMoveRight
 PlayerMoveRight
+		ldx #PLAYER_ACTION_WALKING
+		stx PLAYER_CURRENT_ACTION
+		
+		lda PLAYER_DIRECTION_FACING
+		ora BIT_MASK + 3		;RIGHT
+		sta PLAYER_DIRECTION_FACING
+
         ldx #$00
         jsr MoveSpriteRight
         rts
@@ -519,7 +614,23 @@ UpdateSpritePositions
         bne .UpdateLoop
 
         rts
-        
+    
+;===========================
+;Keyboard testing
+;===========================
+	
+!zone OneKeyPressed
+OneKeyPressed
+		lda #ANIMATION_PLAYER_TALK
+		sta SPRITE_ANIMATION_CYCLE
+		rts
+
+!zone TwoKeyPressed
+TwoKeyPressed
+		lda #ANIMATION_PLAYER_DANCE
+		sta SPRITE_ANIMATION_CYCLE
+		rts
+	
 ;==================================================================
 ;       LEVEL FUNCTIONS
 ;==================================================================
@@ -641,6 +752,129 @@ DrawTile
 
 
 ;==================================================================
+;		ANIMATION FUNCTIONS
+;==================================================================
+
+;==================
+;UpdateAnimations
+;loops through sprites, updating frames where necessary
+;==================
+
+!zone UpdateAnimations
+UpdateAnimations
+		ldx #$00			;sprite index
+.UpdateLoop
+		jsr UpdateCurrentFrame
+		inx
+		cpx #$08
+		bne .UpdateLoop
+		rts
+
+;==================
+;UpdateCurrentFrame
+;expects x as sprite index
+;==================
+
+!zone UpdateCurrentFrame
+UpdateCurrentFrame
+		
+		dec SPRITE_ANIMATION_TIMERS,x
+		bne .NoUpdateNeededYet				;check if frame needs to be updated
+		
+		lda SPRITE_ANIMATION_CYCLE,x
+		asl
+		tay
+		
+		lda ANIMATION_LIST,y
+		sta ZEROPAGE_POINTER_1
+		lda ANIMATION_LIST + 1,y
+		sta ZEROPAGE_POINTER_1 + 1			;get pointer to current animation being played
+		
+		ldy #$00
+		
+		lda (ZEROPAGE_POINTER_1),y			;this will be the timer for the animation
+		sta SPRITE_ANIMATION_TIMERS,x		;x still contains sprite index
+		inc SPRITE_FRAME_INDEX,x
+		ldy SPRITE_FRAME_INDEX,x
+		
+		lda (ZEROPAGE_POINTER_1),y			;get next frame
+		bne .NoRestartNeeded				;a value of 0 indicates the sequence has finished and needs to restart
+		
+		ldy #$01							;first frame has offset of 1, not zero
+		lda (ZEROPAGE_POINTER_1),y
+		tay
+		lda #$01
+		sta SPRITE_FRAME_INDEX,x
+		tya
+		
+.NoRestartNeeded
+		sta SPRITE_CURRENT_FRAME,x					
+		
+.NoUpdateNeededYet
+		rts
+
+;=======================
+;ChangeAnimation
+;expects x as sprite index, VARIABLE1 as new animation
+;=======================
+!zone ChangeAnimation
+ChangeAnimation
+		lda VARIABLE1
+		sta SPRITE_ANIMATION_CYCLE,x
+		
+		asl
+		tay
+		lda ANIMATION_LIST,y
+		sta ZEROPAGE_POINTER_1
+		lda ANIMATION_LIST + 1,y
+		sta ZEROPAGE_POINTER_1 + 1
+		
+		ldy #$00
+		lda (ZEROPAGE_POINTER_1),y
+		sta SPRITE_ANIMATION_TIMERS,x
+		
+		iny
+		lda (ZEROPAGE_POINTER_1),y
+		sta SPRITE_CURRENT_FRAME,x
+		
+		lda #$01
+		sta SPRITE_FRAME_INDEX,x
+		
+		rts
+		
+;===================
+;CopySpriteFrameData
+;moves sprite index from memory to vic register
+;===================
+
+!zone CopySpriteFrameData
+CopySpriteFrameData
+		ldx #$00
+.CopyLoop
+		lda SPRITE_CURRENT_FRAME,x
+		sta SPRITE_POINTER_BASE,x
+		inx
+		cpx #$08
+		bne .CopyLoop
+		
+		rts
+
+;==================================================================
+;       LOGIC FUNCTIONS
+;==================================================================
+
+;=======================
+;ChangePlayerAction
+;new action in x
+;=======================
+!zone ChangePlayerAction
+		stx PLAYER_CURRENT_ACTION
+		ldx #$01
+		stx PLAYER_CHANGE_ACTION_FLAG
+		rts
+		
+		
+;==================================================================
 ;       MATHS FUNCTIONS
 ;==================================================================
 
@@ -698,6 +932,37 @@ TestDrawScreen
 ;       DATA
 ;==================================================================
 
+BIT_MASK
+		!byte $01, $02, $04, $08, $10, $20, $40, $80
+		
+BIT_MASK_INVERSE
+		!byte $fe, $fd, $fb, $f7, $ef, $df, $bf, $7f
+		
+;==================================================================
+;       FLAGS
+;==================================================================
+
+JOYSTICK_STATUS
+		!byte $ff
+		
+PLAYER_CURRENT_ACTION
+		!byte PLAYER_ACTION_STANDING		;default
+		
+PLAYER_PREVIOUS_ACTION
+		!byte PLAYER_ACTION_STANDING		;to check if the animation needs changed
+		
+PLAYER_CHANGE_ACTION_FLAG					;set if game needs to deal with a change by the player
+		!byte $00
+
+* = $2000		
+PLAYER_DIRECTION_FACING
+		!byte $00				;same as JS - $01 = up, $02 = down, $04 = left, $08 = right
+								;right by default
+
+;==========================
+;	SCREEN DATA
+;==========================
+
 SCREEN_ROW_LOW_BYTE
         !byte ( ( SCREEN_CHAR_BUFFER +   0 ) & 0x00ff )
         !byte ( ( SCREEN_CHAR_BUFFER +  80 ) & 0x00ff )
@@ -730,6 +995,18 @@ SPRITE_X_POS
 SPRITE_Y_POS
         !byte $00, $00, $00, $00, $00, $00, $00, $00
 
+SPRITE_CURRENT_FRAME									;actual pointer to sprite definition
+		!byte $00, $00, $00, $00, $00, $00, $00, $00
+		
+SPRITE_FRAME_INDEX										;how far into an animation cycle a sprite is
+		!byte $00, $00, $00, $00, $00, $00, $00, $00
+		
+SPRITE_ANIMATION_TIMERS
+		!byte $00, $00, $00, $00, $00, $00, $00, $00
+		
+SPRITE_ANIMATION_CYCLE
+		!byte $00, $00, $00, $00, $00, $00, $00, $00
+
 CHARSET_COLOR_DATA
         !byte $00, $00, $00, $00, $05, $05, $05, $05, $0a, $0a, $0a, $0a, $0b, $0b, $0b, $0b
 		!byte $0e, $0e, $0e, $0e, $07, $07, $07, $07, $07, $07, $07, $07, $09, $09, $09, $09
@@ -754,23 +1031,80 @@ CHARSET_DATA
         !binary "graphics/rpgset1.chr"
 
 SPRITE_DATA
-        !binary "graphics/spriteset.spr"
+        !binary "graphics/sprites.spr"
 
 CURRENT_SCREEN
-		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $07, $00, $00, $00, $00, $00, $00, $00, $00
-		!byte $00, $05, $05, $05, $05, $05, $00, $00, $01, $01, $00, $07, $00, $00, $00, $00, $00, $00, $00, $00
-		!byte $00, $06, $06, $06, $06, $06, $00, $00, $00, $00, $00, $07, $00, $00, $00, $0a, $0a, $0a, $0a, $0a
-		!byte $00, $02, $03, $02, $03, $02, $00, $00, $00, $09, $00, $07, $00, $00, $0a, $0a, $00, $00, $00, $00
-		!byte $00, $02, $02, $04, $02, $02, $00, $00, $09, $09, $00, $07, $00, $00, $0a, $00, $00, $00, $00, $00
-		!byte $00, $00, $00, $00, $00, $00, $00, $00, $09, $09, $00, $07, $00, $00, $0a, $01, $00, $00, $00, $00
-		!byte $07, $07, $07, $07, $07, $07, $07, $08, $07, $07, $07, $07, $00, $00, $0a, $01, $01, $00, $00, $00
-		!byte $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $0a, $00, $01, $01, $00, $00
-		!byte $00, $00, $00, $01, $00, $01, $00, $00, $01, $01, $00, $00, $00, $00, $0a, $00, $00, $01, $00, $00
-		!byte $00, $00, $00, $01, $01, $00, $00, $00, $00, $01, $00, $00, $00, $00, $0a, $00, $00, $01, $00, $00
-		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $0a, $00, $01, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+		!byte $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00, $00
+
+;=============================
+;	LEVEL DATA
+;=============================
 		
 SCREEN_1_DATA
 		!binary "levels/screen1.scn"
 		
 SCREEN_2_DATA
 		!binary "levels/screen2.scn"
+		
+;==================================================================
+;	ANIMATION DATA
+;==================================================================
+
+;=============================
+;	ANIMATIONS
+;=============================
+
+ANIMATION_LIST
+		!word 0x0000						;null pointer
+		!word ANIM_PLAYER_STAND_UP
+		!word ANIM_PLAYER_STAND_LEFT
+		!word ANIM_PLAYER_STAND_RIGHT
+		!word ANIM_PLAYER_WALK_UP
+		!word ANIM_PLAYER_WALK_LEFT
+		!word ANIM_PLAYER_WALK_RIGHT
+
+		!word ANIM_PLAYER_TALK
+		!word ANIM_PLAYER_DANCE
+
+ANIM_PLAYER_STAND_UP
+		!byte $08
+		!byte $4a, $00
+		
+ANIM_PLAYER_STAND_LEFT
+		!byte $08
+		!byte $45, $00
+		
+ANIM_PLAYER_STAND_RIGHT
+		!byte $08
+		!byte $40, $00						;one frame for standing
+		
+ANIM_PLAYER_WALK_UP
+		!byte $06
+		!byte $4a, $4b, $4a, $4c, $00
+		
+ANIM_PLAYER_WALK_LEFT
+		!byte $04
+		!byte $45, $46, $47, $46, $45, $48, $49, $48, $00
+		
+ANIM_PLAYER_WALK_RIGHT
+		!byte $04
+		!byte $40, $41, $42, $41, $40, $43, $44, $43, $00
+		
+ANIM_PLAYER_TALK
+		!byte $06
+		!byte $4d, $4e, $00
+		
+ANIM_PLAYER_DANCE
+		!byte $0a							;Timer
+		!byte $4f, $50, $51, $50, $00 		;Frame List
+	
