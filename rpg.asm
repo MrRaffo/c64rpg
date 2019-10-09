@@ -11,6 +11,7 @@
 ;       new level structure and level loading, per-tile coloring and per-tile attribute flags
 ;       basic joystick reading
 ;       sprite movement, but no sprite animation
+;	added clipping with background for player sprite
 
 ;================================================
 ;CONSTANTS
@@ -847,7 +848,7 @@ LOGIC_PlayerMoveDown
 		
 .CheckCanMoveDown
 		lda SPRITE_TILE_Y_POSITION,x
-		cmp #$14
+		cmp #(LEVEL_TILE_HEIGHT - 1)
 		beq .NoMoveAvailable
 		
 		sta MULTI1
@@ -993,7 +994,7 @@ LOGIC_PlayerMoveRight
 
 .CheckCanMoveRight
 		lda SPRITE_TILE_X_POSITION,x
-		cmp #LEVEL_TILE_WIDTH
+		cmp #(LEVEL_TILE_WIDTH - 1)
 		beq .NoMoveAvailable
 		
 		lda SPRITE_TILE_Y_POSITION,x
